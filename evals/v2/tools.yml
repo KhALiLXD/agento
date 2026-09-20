@@ -1,0 +1,41 @@
+version: "2"
+tools:
+  - id: categories
+    tool:
+      description: Browse all product categories, sections and departments. تصفح جميع الأقسام والفئات
+      input_schema:
+        type: object
+        properties: {}
+    trigger_hints: [categories, departments, sections, أقسام, الأقسام, فئات]
+    request:
+      method: GET
+      url: https://example.invalid/categories
+  - id: search-products
+    tool:
+      description: Search for a product by keyword, name or use. shampoo hair nails skin ابحث عن منتج شامبو شعر أظافر بشرة
+      input_schema:
+        type: object
+        properties:
+          q: { type: string }
+        required: [q]
+    trigger_hints: [search, find, looking for, ابحث, بدي, عندكم]
+    request:
+      method: GET
+      url: https://example.invalid/search
+      map:
+        query:
+          q: $.q
+  - id: product-details
+    tool:
+      description: Show details, price or information for a product SKU. تفاصيل وسعر منتج برمز
+      input_schema:
+        type: object
+        properties:
+          sku: { type: string }
+        required: [sku]
+    request:
+      method: GET
+      url: https://example.invalid/products/{sku}
+      map:
+        path:
+          sku: $.sku

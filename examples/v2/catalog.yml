@@ -1,0 +1,95 @@
+version: "2"
+routing:
+  candidate_limit: 4
+tools:
+  - id: categories
+    tool:
+      description: Browse product categories and departments. تصفح أقسام المنتجات
+      input_schema:
+        type: object
+        properties: {}
+    trigger_hints:
+      - categories
+      - departments
+      - أقسام
+    request:
+      method: GET
+      url: https://api.example.com/categories
+    selection:
+      items_path: $.data
+      id_path: $.code
+      label_path: $.label
+    navigates_to:
+      tool: products
+      map:
+        $.category_id: $.code
+  - id: products
+    tool:
+      description: List products in a selected category. منتجات القسم
+      input_schema:
+        type: object
+        properties:
+          category_id:
+            type: string
+        required:
+          - category_id
+    request:
+      method: GET
+      url: https://api.example.com/products
+      map:
+        query:
+          category: $.category_id
+    selection:
+      items_path: $.data
+      id_path: $.sku
+      label_path: $.label
+    navigates_to:
+      tool: product-details
+      map:
+        $.sku: $.sku
+  - id: product-details
+    tool:
+      description: Show details of a selected product. تفاصيل المنتج
+      input_schema:
+        type: object
+        properties:
+          sku:
+            type: string
+        required:
+          - sku
+    request:
+      method: GET
+      url: https://api.example.com/products/{sku}
+      map:
+        path:
+          sku: $.sku
+    response:
+      output_schema:
+        type: object
+        properties:
+          sku:
+            type: string
+          label:
+            type: string
+          price:
+            type: number
+        required:
+          - sku
+          - label
+          - price
+      model_view:
+        include:
+          - sku
+          - label
+          - price
+models:
+  routing:
+    provider: openai
+    model: gpt-4o-mini
+    api_key: $ENV:OPENAI_API_KEY
+    temperature: 0
+  presentation:
+    provider: openai
+    model: gpt-4o-mini
+    api_key: $ENV:OPENAI_API_KEY
+    temperature: 0.2

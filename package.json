@@ -1,0 +1,77 @@
+{
+  "name": "@lousin/agento",
+  "version": "2.0.0-alpha.2",
+  "description": "AGENTO: a schema-driven AI agent runtime for existing REST APIs",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "docs",
+    "scripts/clean-dist.mjs",
+    "tsconfig.json",
+    "evals/v2",
+    "examples/console.mjs",
+    "examples/*/*.mjs",
+    "examples/*/*.mts",
+    "examples/*/*.ts",
+    "examples/*/*.yml",
+    "examples/*/README.md",
+    "examples/*/package.json",
+    "examples/*/package-lock.json",
+    "examples/*/tsconfig.json",
+    "examples/*/.env.example"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./v2": {
+      "types": "./dist/v2/index.d.ts",
+      "import": "./dist/v2/index.js"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/clean-dist.mjs && tsc",
+    "prepack": "npm run build",
+    "dev": "tsc --watch",
+    "pretest": "npm run build",
+    "test": "node --test tests/v2/*.test.mjs",
+    "lint": "tsc --noEmit && prettier --check src tests/v2 examples/shared examples/v2 examples/discord-bot/bot.ts examples/travel-agent/server.ts",
+    "test:v2": "npm run build && node --test tests/v2/*.test.mjs",
+    "test:coverage": "npm run build && node --experimental-test-coverage --test-coverage-include=\"dist/v2/**\" --test tests/v2/*.test.mjs",
+    "format": "prettier --write src tests/v2 examples docs README.md scripts",
+    "demo:catalog": "npm run build && node examples/v2/demo.mjs catalog",
+    "demo:booking": "npm run build && node examples/v2/demo.mjs booking",
+    "example:travel": "npm run build && npm --prefix examples/travel-agent start",
+    "example:discord": "npm run build && npm --prefix examples/discord-bot start",
+    "example:console": "npm run build && node examples/console.mjs"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "chatbot",
+    "openai",
+    "anthropic",
+    "conversation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "yaml": "^2.3.4",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "prettier": "^3.9.8",
+    "typescript": "^5.3.3"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20.11.0"
+  }
+}

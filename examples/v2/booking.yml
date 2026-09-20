@@ -1,0 +1,139 @@
+version: "2"
+session:
+  ttl_ms: 1800000
+  max_history_messages: 12
+rate_limits:
+  messages: 60
+  messages_per_session: 500
+  ai_calls: 30
+  tool_calls: 60
+tools:
+  - id: services
+    tool:
+      description: Browse available salon services. خدمات الصالون
+      input_schema:
+        type: object
+        properties: {}
+    request:
+      method: GET
+      url: https://api.example.com/services
+  - id: availability
+    tool:
+      description: Find appointment slots for a date. مواعيد متاحة
+      input_schema:
+        type: object
+        properties:
+          service_id:
+            type: string
+          date:
+            type: string
+            format: date
+        required:
+          - service_id
+          - date
+    depends_on:
+      - tool: services
+        select:
+          items_path: $.services
+          id_path: $.code
+          label_path: $.label
+        map:
+          $.service_id: $.code
+        ttl_ms: 60000
+    request:
+      method: GET
+      url: https://api.example.com/availability
+      map:
+        query:
+          service: $.service_id
+          date: $.date
+    response:
+      output_schema:
+        type: object
+        properties:
+          slots:
+            type: array
+            items:
+              type: object
+              properties:
+                slot_token:
+                  type: string
+                label:
+                  type: string
+              required:
+                - slot_token
+                - label
+        required:
+          - slots
+  - id: book
+    tool:
+      description: Book a salon appointment. احجز موعد صالون
+      input_schema:
+        type: object
+        properties:
+          date:
+            type: string
+            format: date
+          slot_token:
+            type: string
+          notes:
+            type: string
+            maxLength: 500
+        required:
+          - date
+          - slot_token
+    depends_on:
+      - tool: availability
+        arguments:
+          date: $.date
+        select:
+          items_path: $.slots
+          id_path: $.slot_token
+          label_path: $.label
+        map:
+          $.slot_token: $.slot_token
+        ttl_ms: 30000
+    behavior:
+      effect: side-effect
+      confirmation:
+        required: true
+        ttl_ms: 30000
+    request:
+      method: POST
+      url: https://api.example.com/bookings
+      auth:
+        type: session
+      retry:
+        attempts: 1
+      map:
+        body:
+          slot_token: $.slot_token
+          notes: $.notes
+          currency:
+            source: constant
+            value: SAR
+          request_id:
+            source: generated
+            generator: uuid
+  - id: my-bookings
+    tool:
+      description: List my existing bookings. حجوزاتي
+      input_schema:
+        type: object
+        properties: {}
+    request:
+      method: GET
+      url: https://api.example.com/bookings
+      auth:
+        type: session
+models:
+  routing:
+    provider: openai
+    model: gpt-4o-mini
+    api_key: $ENV:OPENAI_API_KEY
+    temperature: 0
+  presentation:
+    provider: openai
+    model: gpt-4o-mini
+    api_key: $ENV:OPENAI_API_KEY
+    temperature: 0.2

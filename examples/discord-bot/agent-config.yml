@@ -1,0 +1,700 @@
+# Real salon API at localhost:3000. Set AGENTO_API_BASE_URL to override the base URL.
+# List responses below use bare arrays ($), preserving the original example contract.
+# For wrapped lists change items_path to the exact response path, e.g. $.data.
+# Availability selection expects { slot_token, start_at }; adjust label_path to your API.
+version: "2"
+models:
+  routing:
+    provider: openai
+    model: gpt-4o-mini
+    api_key: $ENV:OPENAI_API_KEY
+    temperature: 0
+  presentation:
+    provider: openai
+    model: gpt-4o-mini
+    api_key: $ENV:OPENAI_API_KEY
+    temperature: 0.2
+routing:
+  candidate_limit: 8
+  fallback_attempts: 2
+session:
+  ttl_ms: 1800000
+  max_history_messages: 20
+  max_sessions: 10000
+  max_steps: 24
+rate_limits:
+  ai_calls: 60
+  tool_calls: 120
+  messages: 120
+  messages_per_session: 500
+  window_ms: 60000
+tools:
+  - id: search-services
+    tool:
+      title: Search Services
+      description: >-
+        Use this endpoint when the user wants to find services related to a specific:
+
+        - service name
+
+        - keyword
+
+        - treatment
+
+        - body area
+
+        - category-like term
+
+        - beauty need or desired result
+
+
+        This includes broad service queries such as:
+
+        - "What hair services do you have?"
+
+        - "What coloring services are available?"
+
+        - "Show me services for damaged hair."
+
+        - "Do you have anything for hair dye?"
+
+        - "What nail services do you offer?"
+
+
+        Extract the most relevant search phrase from the user's message and pass it through the "q"
+        query parameter.
+
+
+        Examples:
+
+        - "What hair services do you have?" -> q: "hair"
+
+        - "What coloring services are available?" -> q: "coloring"
+
+        - "Do you have services for hair dye?" -> q: "hair dye"
+
+        - "Show me treatments for damaged hair." -> q: "damaged hair"
+
+
+        Use get-categories only when the user explicitly wants to browse the general categories or
+        sections without searching for related services.
+      input_schema:
+        type: object
+        properties:
+          q:
+            type: string
+            description: |-
+              The service name, category-like term, treatment, body area,
+              keyword, beauty need, or desired result extracted from the user's message.
+          limit:
+            type: integer
+            description: Maximum number of matching services to return
+        required:
+          - q
+        additionalProperties: false
+    trigger_hints:
+      - search for a service
+      - find a service
+      - show me available services
+      - what services do you have for
+      - what hair services do you have
+      - show me hair services
+      - what coloring services are available
+      - do you have hair coloring services
+      - what services are available for hair dye
+      - show me services for damaged hair
+      - what nail services do you offer
+      - do you offer makeup services
+      - I am looking for a service
+      - I need a service for
+      - services related to
+      - services for
+      - do you have anything for
+      - what is available for
+    request:
+      method: GET
+      url: http://localhost:3000/api/catalog/services/search
+      timeout_ms: 8000
+      map:
+        path: {}
+        query:
+          q: $.q
+          limit: $.limit
+        body: {}
+    response:
+      instructions: >-
+        You are Rozy, a salon assistant. Reply in the user language when available. Use only API
+        facts. Present all matching services from the API response in a clear, friendly numbered
+        list.
+
+
+        For each service, include the following fields only when they are available:
+
+        - service name
+
+        - description
+
+        - price
+
+        - duration
+
+
+        When multiple matching services are returned, briefly introduce them based on the user's
+        request.
+
+
+        Example:
+
+        "Here are the available hair services:"
+
+        or:
+
+        "Here are the available coloring services:"
+
+
+        After listing the results, ask:
+
+        "Which service would you like more details about? Please tell me the name or number."
+
+
+        If no matching services are returned, say:
+
+        "I couldn't find any services matching that request. Could you try another service name or
+        keyword?"
+
+
+        IMPORTANT:
+
+        - Use ONLY services and information returned by the API.
+
+        - Never invent services, prices, durations, descriptions, or availability.
+
+        - Do not claim that a service is available unless it exists in the API response.
+
+        - Do not return categories or groups as if they were services.
+    selection:
+      items_path: $
+      id_path: $.id
+      label_path: $.name
+    navigates_to:
+      tool: get-service-details
+      map:
+        $.service_id: $.id
+  - id: get-categories
+    tool:
+      title: Browse Categories
+      description:
+        Use when user wants to see available service categories (hair, nails, skin, makeup).
+        Only use this when user asks about CATEGORIES or SECTIONS, not specific services.
+      input_schema:
+        type: object
+        properties: {}
+        required: []
+        additionalProperties: false
+    trigger_hints:
+      - what services
+      - what services do you have
+      - services do you have
+      - show me services
+      - what do you have
+      - what categories
+      - what sections
+      - show me categories
+      - browse categories
+      - list categories
+      - types of services
+      - service categories
+    request:
+      method: GET
+      url: http://localhost:3000/api/catalog/categories
+      timeout_ms: 8000
+      map:
+        path: {}
+        query: {}
+        body: {}
+    response:
+      instructions: >-
+        You are Rozy, a salon assistant. Reply in the user language when available. Use only API
+        facts. Present the available categories from the API response in a friendly numbered list.
+
+        After listing categories, ask: "Which category interests you? Please tell me the name or
+        number."
+
+        IMPORTANT: Use ONLY the categories from the API response. Do not make up any categories.
+    selection:
+      items_path: $
+      id_path: $.id
+      label_path: $.name
+    navigates_to:
+      tool: get-groups
+      map:
+        $.search: $.name
+  - id: get-groups
+    tool:
+      title: Browse Service Groups
+      description:
+        Use when user wants to see specific group of services in a category (like body care,
+        hair, nails, etc). Use the search parameter to filter by category name.
+      input_schema:
+        type: object
+        properties:
+          search:
+            type: string
+            description: Search term
+        required: []
+        additionalProperties: false
+    trigger_hints:
+      - show me services in
+      - what services in
+      - services in this category
+      - services on
+      - what do you have in
+      - what do you have on
+      - services for
+      - list of services in
+      - show me the services
+      - body care
+      - hair services
+      - nail services
+      - skin care
+      - makeup
+      - body section
+    request:
+      method: GET
+      url: http://localhost:3000/api/catalog/groups
+      timeout_ms: 8000
+      map:
+        path: {}
+        query:
+          search: $.search
+        body: {}
+    response:
+      instructions: >-
+        You are Rozy, a salon assistant. Reply in the user language when available. Use only API
+        facts. Present the service groups from the API response in a friendly numbered list.
+
+        After listing groups, ask: "Which group would you like to see services for? Please tell me
+        the name or number."
+
+        IMPORTANT: Use ONLY the groups from the API response. Do not add any services or details
+        that are not in the response.
+    selection:
+      items_path: $
+      id_path: $.id
+      label_path: $.name
+    navigates_to:
+      tool: get-services
+      map:
+        $.group_id: $.id
+  - id: get-services
+    tool:
+      title: Get Services in Group
+      description:
+        Use when user wants to see services in a specific group. Requires group_id from a
+        previous group selection.
+      input_schema:
+        type: object
+        properties:
+          page:
+            type: integer
+            description: Page number
+            default: 1
+          limit:
+            type: integer
+            description: Items per page
+            default: 20
+          group_id:
+            description: Group ID from previous selection
+            anyOf:
+              - type: string
+              - type: integer
+        required:
+          - group_id
+        additionalProperties: false
+    trigger_hints:
+      - show me
+      - what services in
+      - services for
+      - list of services
+    request:
+      method: GET
+      url: http://localhost:3000/api/catalog/groups/{group_id}/services
+      timeout_ms: 8000
+      map:
+        path:
+          group_id: $.group_id
+        query:
+          page: $.page
+          limit: $.limit
+        body: {}
+    response:
+      instructions: >-
+        You are Rozy, a salon assistant. Reply in the user language when available. Use only API
+        facts. Present the services from the API response with names, descriptions, prices, and
+        duration in a friendly numbered list.
+
+        After listing services, ask: "Which service would you like more details about? Please tell
+        me the name or number."
+
+        IMPORTANT: Use ONLY the services from the API response. Do not invent or add any services
+        that are not in the data.
+    selection:
+      items_path: $
+      id_path: $.id
+      label_path: $.name
+    navigates_to:
+      tool: get-service-details
+      map:
+        $.service_id: $.id
+    depends_on:
+      - tool: get-groups
+        when: missing
+        select:
+          items_path: $
+          id_path: $.id
+          label_path: $.name
+        map:
+          $.group_id: $.id
+        ttl_ms: 60000
+  - id: get-service-details
+    tool:
+      title: Service Details
+      description:
+        Use when user wants detailed information about a specific service. Requires service_id
+        from a previous service selection.
+      input_schema:
+        type: object
+        properties:
+          service_id:
+            description: Service ID from previous services list
+            anyOf:
+              - type: string
+              - type: integer
+        required:
+          - service_id
+        additionalProperties: false
+    trigger_hints:
+      - service details
+      - tell me about
+      - what is
+      - more info
+      - details of
+      - describe
+    request:
+      method: GET
+      url: http://localhost:3000/api/catalog/services/{service_id}
+      timeout_ms: 8000
+      map:
+        path:
+          service_id: $.service_id
+        query: {}
+        body: {}
+    response:
+      instructions:
+        You are Rozy, a salon assistant. Reply in the user language when available. Use only
+        API facts. Present full service details including variants, prices, duration, and images.
+    depends_on:
+      - tool: get-services
+        when: missing
+        select:
+          items_path: $
+          id_path: $.id
+          label_path: $.name
+        map:
+          $.service_id: $.id
+        ttl_ms: 60000
+  - id: get-service-employees
+    tool:
+      title: Service Employees
+      description: Use when user wants to see which employees can perform a specific service.
+      input_schema:
+        type: object
+        properties:
+          service_id:
+            anyOf:
+              - type: string
+              - type: integer
+        required:
+          - service_id
+        additionalProperties: false
+    trigger_hints:
+      - who can do
+      - who does
+      - which employee
+      - which stylist
+      - available staff
+      - specialist
+    request:
+      method: GET
+      url: http://localhost:3000/api/catalog/services/{service_id}/employees
+      timeout_ms: 8000
+      map:
+        path:
+          service_id: $.service_id
+        query: {}
+        body: {}
+    response:
+      instructions:
+        You are Rozy, a salon assistant. Reply in the user language when available. Use only
+        API facts. Present available employees/stylists for this service.
+  - id: get-availability
+    tool:
+      title: Check Availability
+      description:
+        Use when user wants to see available appointment slots or book a time. Needs date and
+        service.
+      input_schema:
+        type: object
+        properties:
+          date:
+            type: string
+            description: Appointment date (YYYY-MM-DD)
+          variant_id:
+            type: integer
+            description: Service variant ID
+          step:
+            type: integer
+            description: Time interval in minutes
+            default: 15
+          employee_id:
+            type: integer
+            description: Specific employee ID (optional)
+        required:
+          - date
+          - variant_id
+        additionalProperties: false
+    trigger_hints:
+      - available
+      - availability
+      - when can i come
+      - what times
+      - open slots
+      - book appointment
+      - schedule
+      - appointments
+      - time slots
+      - book
+    request:
+      method: GET
+      url: http://localhost:3000/api/availability
+      timeout_ms: 8000
+      map:
+        path: {}
+        query:
+          date: $.date
+          variant_id: $.variant_id
+          step: $.step
+          employee_id: $.employee_id
+        body: {}
+    response:
+      instructions:
+        You are Rozy, a salon assistant. Reply in the user language when available. Use only
+        API facts. Show available time slots in a clear format.
+    selection: &a1
+      items_path: $
+      id_path: $.slot_token
+      label_path: $.start_at
+    navigates_to:
+      tool: book-appointment
+      map:
+        $.slot_token: $.slot_token
+    depends_on:
+      - tool: get-service-variants
+        when: missing
+        select:
+          items_path: $
+          id_path: $.id
+          label_path: $.name
+        map:
+          $.variant_id: $.id
+        ttl_ms: 120000
+  - id: book-appointment
+    tool:
+      title: Book Appointment
+      description:
+        Book a salon appointment. Collect the date, let the user choose a variant and an
+        available slot, and require confirmation. Never invent a slot token.
+      input_schema:
+        type: object
+        properties:
+          slot_token:
+            type: string
+            description: Slot token from availability
+          notes:
+            type: string
+            description: Any special requests
+          date:
+            type: string
+            format: date
+          variant_id:
+            type: integer
+            minimum: 1
+          employee_id:
+            type: integer
+            minimum: 1
+        required:
+          - slot_token
+        additionalProperties: false
+    trigger_hints:
+      - book this
+      - confirm booking
+      - I'll take it
+      - book it
+      - yes book
+      - confirm
+      - proceed
+      - schedule it
+      - set up appointment
+      - reserve
+    request:
+      method: POST
+      url: http://localhost:3000/api/bookings/from-availability
+      timeout_ms: 12000
+      map:
+        path: {}
+        query: {}
+        body:
+          slot_token: $.slot_token
+          payment_provider:
+            source: constant
+            value: none
+          currency:
+            source: constant
+            value: SAR
+          hold_minutes:
+            source: constant
+            value: 15
+          notes: $.notes
+      auth:
+        type: session
+      retry:
+        attempts: 1
+    response:
+      instructions:
+        You are Rozy, a salon assistant. Reply in the user language when available. Use only
+        API facts. If successful, share confirmation details. If error, apologize without exposing
+        details.
+    behavior:
+      effect: side-effect
+      confirmation:
+        required: true
+        ttl_ms: 120000
+    depends_on:
+      - tool: get-availability
+        when: missing
+        arguments:
+          date: $.date
+          variant_id: $.variant_id
+          employee_id: $.employee_id
+        select: *a1
+        map:
+          $.slot_token: $.slot_token
+        ttl_ms: 120000
+  - id: get-my-appointments
+    tool:
+      title: My Appointments
+      description: Use when user wants to see their upcoming appointments. Requires client authentication.
+      input_schema:
+        type: object
+        properties:
+          limit:
+            type: integer
+            description: Number of appointments
+            default: 20
+        required: []
+        additionalProperties: false
+    trigger_hints:
+      - my appointments
+      - my bookings
+      - my schedule
+      - upcoming
+      - my reservations
+    request:
+      method: GET
+      url: http://localhost:3000/api/appointments
+      timeout_ms: 8000
+      map:
+        path: {}
+        query:
+          limit: $.limit
+        body: {}
+      auth:
+        type: session
+    response:
+      instructions:
+        You are Rozy, a salon assistant. Reply in the user language when available. Use only
+        API facts. Present user's upcoming appointments with dates, times, and services.
+  - id: get-featured-services
+    tool:
+      title: Featured Services
+      description: Use when user wants to see featured or popular services.
+      input_schema:
+        type: object
+        properties:
+          limit:
+            type: integer
+            description: Number of services
+            default: 6
+        required: []
+        additionalProperties: false
+    trigger_hints:
+      - featured
+      - popular
+      - recommended
+      - best services
+      - top services
+    request:
+      method: GET
+      url: http://localhost:3000/api/home/featured-services
+      timeout_ms: 8000
+      map:
+        path: {}
+        query:
+          limit: $.limit
+        body: {}
+    response:
+      instructions:
+        You are Rozy, a salon assistant. Reply in the user language when available. Use only
+        API facts. Present featured services with names, descriptions, and prices.
+  - id: get-service-variants
+    tool:
+      title: Service Variants
+      description: Use when user wants to see different variants/options for a service.
+      input_schema:
+        type: object
+        properties:
+          service_id:
+            type: integer
+            description: Service ID
+          search:
+            type: string
+            description: Search term
+        required: []
+        additionalProperties: false
+    trigger_hints:
+      - variants
+      - options
+      - different types
+      - price options
+    request:
+      method: GET
+      url: http://localhost:3000/api/catalog/service-variants
+      timeout_ms: 8000
+      map:
+        path: {}
+        query:
+          service_id: $.service_id
+          search: $.search
+        body: {}
+    response:
+      instructions:
+        You are Rozy, a salon assistant. Reply in the user language when available. Use only
+        API facts. Present service variants with names, prices, and duration.
+    selection:
+      items_path: $
+      id_path: $.id
+      label_path: $.name
+    navigates_to:
+      tool: get-availability
+      map:
+        $.variant_id: $.id

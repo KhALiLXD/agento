@@ -1,0 +1,186 @@
+[
+  {
+    "input": "Show categories",
+    "expectedTool": "categories"
+  },
+  {
+    "input": "List all departments",
+    "expectedTool": "categories"
+  },
+  {
+    "input": "Browse product sections",
+    "expectedTool": "categories"
+  },
+  {
+    "input": "What categories exist?",
+    "expectedTool": "categories"
+  },
+  {
+    "input": "Show me the sections",
+    "expectedTool": "categories"
+  },
+  {
+    "input": "Which departments do you have?",
+    "expectedTool": "categories"
+  },
+  {
+    "input": "تصفح الأقسام",
+    "expectedTool": "categories"
+  },
+  {
+    "input": "اعرض الأقسام",
+    "expectedTool": "categories"
+  },
+  {
+    "input": "ما هي فئات المنتجات؟",
+    "expectedTool": "categories"
+  },
+  {
+    "input": "بدي أشوف جميع الأقسام",
+    "expectedTool": "categories"
+  },
+  {
+    "input": "Find shampoo",
+    "expectedTool": "search-products",
+    "expectedArguments": {
+      "q": "shampoo"
+    }
+  },
+  {
+    "input": "Search for hair coloring",
+    "expectedTool": "search-products",
+    "expectedArguments": {
+      "q": "hair coloring"
+    }
+  },
+  {
+    "input": "I am looking for nail polish",
+    "expectedTool": "search-products",
+    "expectedArguments": {
+      "q": "nail polish"
+    }
+  },
+  {
+    "input": "Show hair care products",
+    "expectedTool": "search-products",
+    "expectedArguments": {
+      "q": "hair care"
+    }
+  },
+  {
+    "input": "Search for skin care",
+    "expectedTool": "search-products",
+    "expectedArguments": {
+      "q": "skin care"
+    }
+  },
+  {
+    "input": "Find sunscreen",
+    "expectedTool": "search-products",
+    "expectedArguments": {
+      "q": "sunscreen"
+    }
+  },
+  {
+    "input": "ابحث عن شامبو",
+    "expectedTool": "search-products",
+    "expectedArguments": {
+      "q": "شامبو"
+    }
+  },
+  {
+    "input": "بدي منتجات شعر",
+    "expectedTool": "search-products",
+    "expectedArguments": {
+      "q": "شعر"
+    }
+  },
+  {
+    "input": "عندكم طلاء أظافر",
+    "expectedTool": "search-products",
+    "expectedArguments": {
+      "q": "طلاء أظافر"
+    }
+  },
+  {
+    "input": "ابحث عن منتجات بشرة",
+    "expectedTool": "search-products",
+    "expectedArguments": {
+      "q": "بشرة"
+    }
+  },
+  {
+    "input": "Show product details for P1",
+    "expectedTool": "product-details",
+    "expectedArguments": {
+      "sku": "P1"
+    }
+  },
+  {
+    "input": "What is the price of SKU P1?",
+    "expectedTool": "product-details",
+    "expectedArguments": {
+      "sku": "P1"
+    }
+  },
+  {
+    "input": "Information for product P1",
+    "expectedTool": "product-details",
+    "expectedArguments": {
+      "sku": "P1"
+    }
+  },
+  {
+    "input": "Show details P1",
+    "expectedTool": "product-details",
+    "expectedArguments": {
+      "sku": "P1"
+    }
+  },
+  {
+    "input": "تفاصيل منتج برمز P1",
+    "expectedTool": "product-details",
+    "expectedArguments": {
+      "sku": "P1"
+    }
+  },
+  {
+    "input": "سعر منتج P1",
+    "expectedTool": "product-details",
+    "expectedArguments": {
+      "sku": "P1"
+    }
+  },
+  {
+    "input": "Hello",
+    "expectedTool": null
+  },
+  {
+    "input": "What is the weather tomorrow?",
+    "expectedTool": null
+  },
+  {
+    "input": "Write a poem",
+    "expectedTool": null
+  },
+  {
+    "input": "Tell me a joke",
+    "expectedTool": null
+  },
+  {
+    "input": "مرحبا",
+    "expectedTool": null
+  },
+  {
+    "input": "كيف الجو؟",
+    "expectedTool": null
+  },
+  {
+    "input": "اشرح لي الرياضيات",
+    "expectedTool": null
+  },
+  {
+    "input": "Solve 2 plus 2",
+    "expectedTool": null
+  }
+]
