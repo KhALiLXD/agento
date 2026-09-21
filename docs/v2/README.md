@@ -49,6 +49,14 @@ For conversation, configure `models.routing` in YAML or supply a `ModelAdapter`,
 
 ```yaml
 version: "2"
+assistant:
+  name: Rozy
+  language: auto
+  system_prompt: |
+    You are a friendly application assistant. Reply in the user's language.
+    Do not invent facts that should come from application tools.
+  conversation:
+    enabled: true
 models:
   routing:
     provider: openai
@@ -62,17 +70,24 @@ models:
     temperature: 0.5
 routing:
   candidate_limit: 6
+  lexical:
+    min_score: 1.0
+  semantic_recall:
+    enabled: true
+    candidate_limit: 6
+    max_catalog_tools: 100
+    max_catalog_chars: 100000
 tools:
   - id: search-services
     tool:
-      description: Search services by treatment or keyword. البحث عن خدمات الصالون
+      description: Search services by treatment or keyword.
       input_schema:
         type: object
         properties:
           q: { type: string, minLength: 1 }
           limit: { type: integer, minimum: 1, maximum: 50, default: 10 }
         required: [q]
-    trigger_hints: [hair services, خدمات الشعر]
+    trigger_hints: [hair services]
     request:
       method: GET
       url: https://api.example.com/services
@@ -88,7 +103,11 @@ tools:
         include: [id, name, price]
 ```
 
-`trigger_hints` contribute scores; they never execute a tool by themselves. Retrieval ranks exact hints, lexical matches, weighted keywords and current pending state. A query with no lexical candidates returns `ROUTING_NO_MATCH` without a model call. Add multilingual hints or inject a semantic `ToolRetriever` for vocabulary the lexical index cannot recognize.
+`trigger_hints` contribute scores; they never execute a tool by themselves. Retrieval first ranks normalized phrases, lexical matches and weighted keywords. Strong matches go directly to final tool selection. Weak or empty matches use a lightweight model-recall request containing only tool ID, title and description, then final selection receives only the shortlisted full tool definitions. This supports an Arabic, French or other model-supported user request against English-only metadata. Translated hints remain a useful cost/latency optimization, not a correctness requirement.
+
+A valid no-tool result is conversational by default. `AgentRuntime.chat()` uses the presentation model (or routing model when no presentation model exists), bounded `session.history`, the assistant system prompt and a lightweight capability summary. It does not execute tools or receive credentials. Set `assistant.conversation.enabled: false` for router-only behavior, where no match returns `ROUTING_NO_MATCH`.
+
+Semantic recall adds one model call only when lexical confidence is below `routing.lexical.min_score`. It is skipped when the catalog exceeds `routing.semantic_recall.max_catalog_tools` or `max_catalog_chars`; large deployments should inject a more selective retriever. Recall failure remains a model error rather than silently becoming conversation.
 
 ## Results and continuations
 

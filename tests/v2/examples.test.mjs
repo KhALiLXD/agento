@@ -86,6 +86,34 @@ test("all eleven existing salon endpoints are migrated and booking constants rem
     "hold_minutes",
   ])
     assert.equal(key in tool.inputSchema.properties, false);
+  assert.deepEqual(c.executions.get("search-services").config.selection, {
+    items_path: "$.services",
+    id_path: "$.id",
+    label_path: "$.name_ar",
+  });
+  assert.deepEqual(c.executions.get("get-groups").config.selection, {
+    items_path: "$.data",
+    id_path: "$.id",
+    label_path: "$.name_ar",
+  });
+  assert.deepEqual(c.executions.get("get-services").config.selection, {
+    items_path: "$.services",
+    id_path: "$.id",
+    label_path: "$.name_ar",
+  });
+  const availability = c.executions.get("get-availability").config;
+  assert.deepEqual(availability.selection, {
+    items_path: "$.slots",
+    id_path: "$.slot_token",
+    label_path: "$.start_at",
+    match: {
+      input_path: "$.preferred_time",
+      item_path: "$.start_time",
+    },
+  });
+  assert.equal(availability.request.map.query.variant_ids, "$.variant_id");
+  assert.equal(availability.request.map.query.employee_ids, "$.employee_id");
+  assert.equal(availability.request.map.query.variant_id, undefined);
 });
 test("salon navigation preserves selected IDs, obtains slot data from the API and confirms one real HTTP request", async (t) => {
   const calls = [];
@@ -98,23 +126,34 @@ test("salon navigation preserves selected IDs, obtains slot data from the API an
     });
     res.setHeader("content-type", "application/json");
     let data;
-    if (url.pathname.endsWith("/categories")) data = [{ id: 1, name: "Hair" }];
+    if (url.pathname.endsWith("/categories"))
+      data = [{ id: 1, name_ar: "Hair" }];
     else if (url.pathname.endsWith("/groups"))
-      data = [{ id: 7, name: "Coloring" }];
+      data = { ok: true, data: [{ id: 7, name_ar: "Coloring" }] };
     else if (url.pathname.endsWith("/groups/7/services"))
-      data = [{ id: 9, name: "Hair color" }];
+      data = { ok: true, services: [{ id: 9, name_ar: "Hair color" }] };
     else if (url.pathname.endsWith("/services/9"))
-      data = { id: 9, name: "Hair color" };
+      data = { ok: true, service: { id: 9, name_ar: "Hair color" } };
     else if (url.pathname.endsWith("/service-variants"))
       data = [
-        { id: 12, name: "Full color" },
-        { id: 13, name: "Roots" },
+        { id: 12, name_ar: "Full color" },
+        { id: 13, name_ar: "Roots" },
       ];
     else if (url.pathname.endsWith("/availability"))
-      data = [
-        { slot_token: "slot-from-api-1", start_at: "2026-10-01T10:00:00Z" },
-        { slot_token: "slot-from-api-2", start_at: "2026-10-01T11:00:00Z" },
-      ];
+      data = {
+        slots: [
+          {
+            slot_token: "slot-from-api-1",
+            start_time: "10:00",
+            start_at: "2026-10-01T10:00:00Z",
+          },
+          {
+            slot_token: "slot-from-api-2",
+            start_time: "11:00",
+            start_at: "2026-10-01T11:00:00Z",
+          },
+        ],
+      };
     else if (url.pathname.endsWith("/from-availability")) {
       let body = "";
       for await (const chunk of req) body += chunk;
@@ -151,7 +190,7 @@ test("salon navigation preserves selected IDs, obtains slot data from the API an
     });
   }
   assert.equal(r.status, "completed");
-  assert.equal(r.data.id, 9);
+  assert.equal(r.data.service.id, 9);
   assert.deepEqual(
     calls.map((c) => c.path),
     [
@@ -164,7 +203,11 @@ test("salon navigation preserves selected IDs, obtains slot data from the API an
   r = await runtime.invoke({
     sessionId: "booking",
     tool: "book-appointment",
-    arguments: { date: "2026-10-01", notes: "quiet" },
+    arguments: {
+      date: "2026-10-01",
+      preferred_time: "11:00",
+      notes: "quiet",
+    },
     auth: { token: "user:opaque" },
   });
   assert.equal(r.status, "needs_selection");
@@ -172,12 +215,6 @@ test("salon navigation preserves selected IDs, obtains slot data from the API an
     sessionId: "booking",
     selectionId: r.selection.id,
     choice: "13",
-  });
-  assert.equal(r.status, "needs_selection");
-  r = await runtime.select({
-    sessionId: "booking",
-    selectionId: r.selection.id,
-    choice: "slot-from-api-2",
   });
   assert.equal(r.status, "needs_confirmation");
   const confirmationId = r.confirmation.id;
@@ -196,7 +233,7 @@ test("salon navigation preserves selected IDs, obtains slot data from the API an
   });
   assert.equal(calls.at(-1).auth, "Bearer user:opaque");
   assert.equal(
-    calls.find((c) => c.path.endsWith("/availability")).query.variant_id,
+    calls.find((c) => c.path.endsWith("/availability")).query.variant_ids,
     "13",
   );
   assert.equal(

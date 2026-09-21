@@ -2,6 +2,42 @@
 
 `src/v2/config/schema.ts` is the canonical config contract. Unknown configuration keys are rejected. Initialization rejects duplicate tool IDs, unsupported methods/providers, missing descriptions, invalid schemas/URLs, unsafe auth, unresolved path placeholders, undeclared input mappings, unknown dependencies, duplicate/conflicting dependency mappings, missing navigation targets and dependency cycles.
 
+## Assistant and routing
+
+`assistant.system_prompt` controls global persona, tone and casual conversation. It is separate from `tool.response.instructions`, which controls presentation only after an API executes. `assistant.language: auto` asks the model to respond primarily in the current user's language; it does not translate structured arguments. Conversation is enabled by default and can be disabled with `assistant.conversation.enabled: false`.
+
+Routing has two retrieval stages:
+
+1. `routing.lexical` performs cheap Unicode-aware matching. Arabic diacritics and tatweel are removed and common alef forms are normalized by default. Trigger hints and multi-word keywords are phrase-aware.
+2. When the best lexical score is below `routing.lexical.min_score`, `routing.semantic_recall` asks the routing model for up to `candidate_limit` IDs from the cached lightweight catalog. Only `id`, `title`, and `description` are included. Unknown IDs are discarded.
+
+The fused shortlist is bounded by `routing.candidate_limit`; only then are full model-facing tool definitions and input schemas sent to final tool selection. Endpoint URLs, methods, mappings, dependencies, auth configuration, headers and credentials are never part of recall. Strong lexical routes avoid the recall call. Recall is skipped above `max_catalog_tools` or `max_catalog_chars` so large catalogs do not enter an unbounded prompt; provide a custom selective retriever for those deployments. Tool titles and descriptions also have compiler-enforced size limits.
+
+No tool and no lexical candidate are different outcomes. A successful recall/selection decision with no relevant tool enters conversation. A recall provider failure remains `MODEL_PROVIDER_ERROR`. With conversation disabled, a deliberate no-match returns `ROUTING_NO_MATCH`.
+
+```yaml
+assistant:
+  language: auto
+  system_prompt: |
+    Respond naturally. Do not invent application facts.
+  conversation:
+    enabled: true
+    include_capability_summary: true
+routing:
+  candidate_limit: 6
+  lexical:
+    min_score: 1.0
+    normalize_arabic: true
+    phrase_matching: true
+  semantic_recall:
+    enabled: true
+    candidate_limit: 6
+    max_catalog_tools: 100
+    max_catalog_chars: 100000
+```
+
+Metrics distinguish `lexicalRetrievalMs`, `modelRecallMs`, `toolSelectionMs`, and `conversationMs`, plus call counts for recall, selection and conversation. Debug mode reports candidates, confidence, recall use, final selection and `conversation`/`no-match` outcome without prompts or chain-of-thought.
+
 ## Mapping
 
 All user fields live in `tool.input_schema`. `request.map.path`, `.query`, `.body`, and `.headers` select where they are sent. No implicit query-versus-payload inference is used in v2.
@@ -39,6 +75,18 @@ depends_on:
 `when: missing` resolves a dependency only when a mapped destination is absent from host/navigation inputs. The default `when: always` refreshes/resolves the dependency even with supplied destination values. Once resolved, cached dependency data still obeys its TTL.
 
 Dependency map keys are **parent destination paths**, values are **dependency output paths**. This is the reverse of legacy `field_mapping`. Selection paths must be configured; no `id/name/title` heuristic exists. One item is selected automatically for a dependency, multiple items pause for selection, and an empty or malformed set fails explicitly. Duplicate option IDs are rejected.
+
+An optional deterministic `selection.match` can connect a user-owned preference extracted into tool input with a field returned by the API. A unique exact match is selected automatically; zero or multiple matches still require explicit selection. The model never supplies the server-owned selected ID.
+
+```yaml
+selection:
+  items_path: $.slots
+  id_path: $.slot_token
+  label_path: $.start_at
+  match:
+    input_path: $.preferred_time
+    item_path: $.start_time
+```
 
 Facts store source, producing tool, creation time and expiry. Dependency results are cached against arguments and session context. Expired facts are removed; successful side effects invalidate cached facts. Confirmation expiry cannot outlive its dependency data, including expiry inherited from a multi-level chain. Selection is bound to the server-owned session and context. Internal dependency-owned inputs are omitted from confirmation previews. Navigation is explicit and selection-based; dependency graphs, not navigation paths, are required to be acyclic.
 

@@ -81,7 +81,11 @@ test("MCP foundation returns structured errors and inherits runtime validation",
 });
 test("routing evaluations run without APIs and report no-match and argument accuracy", async () => {
   const model = {
-    capabilities: () => ({ nativeTools: true }),
+    capabilities: () => ({ nativeTools: true, structuredOutput: true }),
+    generateStructured: async () => ({
+      data: { candidates: [] },
+      usage: { inputTokens: 1, outputTokens: 1 },
+    }),
     selectTool: async () => ({
       call: { name: "search", arguments: { q: "hair" } },
       usage: { inputTokens: 2, outputTokens: 3 },
@@ -97,6 +101,6 @@ test("routing evaluations run without APIs and report no-match and argument accu
   ]);
   assert.equal(r.toolSelectionAccuracy, 1);
   assert.equal(r.argumentAccuracy, 1);
-  assert.equal(r.modelCalls, 1);
-  assert.equal(r.tokens, 5);
+  assert.equal(r.modelCalls, 2);
+  assert.equal(r.tokens, 7);
 });

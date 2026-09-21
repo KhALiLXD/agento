@@ -67,6 +67,42 @@ test("direct invocation: required query input, defaults and encoding, no model c
   assert.equal(r.meta.modelCalls, 0);
   runtime.dispose();
 });
+test("empty optional navigation results complete without a selection error", async () => {
+  const searchable = structuredClone(search);
+  searchable.selection = {
+    items_path: "$",
+    id_path: "$.id",
+    label_path: "$.name",
+  };
+  searchable.navigates_to = {
+    tool: "details",
+    map: { "$.service_id": "$.id" },
+  };
+  const details = {
+    id: "details",
+    tool: {
+      description: "Get service details",
+      input_schema: input({ service_id: { type: "string" } }, ["service_id"]),
+    },
+    request: {
+      method: "GET",
+      url: "https://api.test/details/{service_id}",
+      map: { path: { service_id: "$.service_id" } },
+    },
+  };
+  const runtime = await create([searchable, details], {
+    fetch: async () => Response.json([]),
+  });
+  const result = await runtime.invoke({
+    sessionId: "empty-search",
+    tool: "search",
+    arguments: { q: "test" },
+  });
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.data, []);
+  assert.equal(result.selection, undefined);
+  runtime.dispose();
+});
 test("native chat uses one routing call, preserves arguments and validates required inputs", async () => {
   let calls = 0;
   const model = {
@@ -200,7 +236,14 @@ test("credentials never enter models, hooks, results or ordinary session state, 
     prompts = [];
   let headers;
   const model = {
-    capabilities: () => ({ nativeTools: true }),
+    capabilities: () => ({ nativeTools: true, structuredOutput: true }),
+    generateStructured: async (r) => {
+      prompts.push(r);
+      return {
+        data: { candidates: ["search"] },
+        usage: { inputTokens: 1, outputTokens: 1 },
+      };
+    },
     selectTool: async (r) => {
       prompts.push(r);
       return {

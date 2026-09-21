@@ -41,6 +41,13 @@ const selection = z
     items_path: pathSchema,
     id_path: pathSchema,
     label_path: pathSchema,
+    match: z
+      .object({
+        input_path: pathSchema,
+        item_path: pathSchema,
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export const providerSchema = z
@@ -71,8 +78,8 @@ export const toolSchema = z
     id: name,
     tool: z
       .object({
-        title: z.string().optional(),
-        description: z.string().trim().min(1),
+        title: z.string().max(200).optional(),
+        description: z.string().trim().min(1).max(8000),
         input_schema: jsonSchema,
       })
       .strict(),
@@ -199,11 +206,67 @@ export const toolSchema = z
 export const configSchema = z
   .object({
     version: z.literal("2"),
+    assistant: z
+      .object({
+        name: z.string().trim().min(1).max(100).optional(),
+        language: z.string().trim().min(1).default("auto"),
+        system_prompt: z
+          .string()
+          .default(
+            "You are an AI assistant connected to application tools through AGENTO. Respond naturally to casual conversation. Reply in the user's language when practical. Do not invent facts that should come from application tools.",
+          ),
+        conversation: z
+          .object({
+            enabled: z.boolean().default(true),
+            include_capability_summary: z.boolean().default(true),
+            capability_summary: z
+              .object({
+                include_title: z.boolean().default(true),
+                include_description: z.boolean().default(true),
+              })
+              .strict()
+              .default({}),
+            use_presentation_model: z.boolean().default(true),
+          })
+          .strict()
+          .default({}),
+      })
+      .strict()
+      .default({}),
     tools: z.array(toolSchema).min(1).max(10000),
     routing: z
       .object({
         candidate_limit: positive.max(100).default(6),
         fallback_attempts: positive.max(3).default(2),
+        lexical: z
+          .object({
+            enabled: z.boolean().default(true),
+            min_score: z.number().nonnegative().default(1),
+            normalize_unicode: z.boolean().default(true),
+            normalize_arabic: z.boolean().default(true),
+            phrase_matching: z.boolean().default(true),
+          })
+          .strict()
+          .default({}),
+        semantic_recall: z
+          .object({
+            enabled: z.boolean().default(true),
+            candidate_limit: positive.max(100).default(6),
+            max_catalog_tools: positive.max(10000).default(100),
+            max_catalog_chars: positive.max(1000000).default(100000),
+            metadata: z
+              .object({
+                include_id: z.literal(true).default(true),
+                include_title: z.boolean().default(true),
+                include_description: z.boolean().default(true),
+              })
+              .strict()
+              .default({}),
+            allow_no_match: z.literal(true).default(true),
+            multilingual: z.literal(true).default(true),
+          })
+          .strict()
+          .default({}),
       })
       .strict()
       .default({}),

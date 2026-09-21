@@ -42,5 +42,12 @@ export interface RuntimeMetrics {
   retryCount: number;
   dependencySteps: number;
   routingMs: number;
+  lexicalRetrievalMs: number;
+  modelRecallMs: number;
+  toolSelectionMs: number;
+  conversationMs: number;
+  modelRecallCalls: number;
+  toolSelectionCalls: number;
+  conversationCalls: number;
   httpMs: number;
 }

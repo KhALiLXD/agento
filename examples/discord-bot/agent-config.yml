@@ -173,9 +173,9 @@ tools:
 
         - Do not return categories or groups as if they were services.
     selection:
-      items_path: $
+      items_path: $.services
       id_path: $.id
-      label_path: $.name
+      label_path: $.name_ar
     navigates_to:
       tool: get-service-details
       map:
@@ -224,11 +224,11 @@ tools:
     selection:
       items_path: $
       id_path: $.id
-      label_path: $.name
+      label_path: $.name_ar
     navigates_to:
       tool: get-groups
       map:
-        $.search: $.name
+        $.search: $.name_ar
   - id: get-groups
     tool:
       title: Browse Service Groups
@@ -279,9 +279,9 @@ tools:
         IMPORTANT: Use ONLY the groups from the API response. Do not add any services or details
         that are not in the response.
     selection:
-      items_path: $
+      items_path: $.data
       id_path: $.id
-      label_path: $.name
+      label_path: $.name_ar
     navigates_to:
       tool: get-services
       map:
@@ -339,9 +339,9 @@ tools:
         IMPORTANT: Use ONLY the services from the API response. Do not invent or add any services
         that are not in the data.
     selection:
-      items_path: $
+      items_path: $.services
       id_path: $.id
-      label_path: $.name
+      label_path: $.name_ar
     navigates_to:
       tool: get-service-details
       map:
@@ -350,9 +350,9 @@ tools:
       - tool: get-groups
         when: missing
         select:
-          items_path: $
+          items_path: $.data
           id_path: $.id
-          label_path: $.name
+          label_path: $.name_ar
         map:
           $.group_id: $.id
         ttl_ms: 60000
@@ -397,9 +397,9 @@ tools:
       - tool: get-services
         when: missing
         select:
-          items_path: $
+          items_path: $.services
           id_path: $.id
-          label_path: $.name
+          label_path: $.name_ar
         map:
           $.service_id: $.id
         ttl_ms: 60000
@@ -459,6 +459,10 @@ tools:
           employee_id:
             type: integer
             description: Specific employee ID (optional)
+          preferred_time:
+            type: string
+            pattern: ^(?:[01]\d|2[0-3]):[0-5]\d$
+            description: User's explicitly requested local time normalized to HH:mm
         required:
           - date
           - variant_id
@@ -482,18 +486,21 @@ tools:
         path: {}
         query:
           date: $.date
-          variant_id: $.variant_id
+          variant_ids: $.variant_id
           step: $.step
-          employee_id: $.employee_id
+          employee_ids: $.employee_id
         body: {}
     response:
       instructions:
         You are Rozy, a salon assistant. Reply in the user language when available. Use only
         API facts. Show available time slots in a clear format.
     selection: &a1
-      items_path: $
+      items_path: $.slots
       id_path: $.slot_token
       label_path: $.start_at
+      match:
+        input_path: $.preferred_time
+        item_path: $.start_time
     navigates_to:
       tool: book-appointment
       map:
@@ -504,7 +511,7 @@ tools:
         select:
           items_path: $
           id_path: $.id
-          label_path: $.name
+          label_path: $.name_ar
         map:
           $.variant_id: $.id
         ttl_ms: 120000
@@ -532,6 +539,10 @@ tools:
           employee_id:
             type: integer
             minimum: 1
+          preferred_time:
+            type: string
+            pattern: ^(?:[01]\d|2[0-3]):[0-5]\d$
+            description: User's explicitly requested local time normalized to HH:mm
         required:
           - slot_token
         additionalProperties: false
@@ -586,6 +597,7 @@ tools:
           date: $.date
           variant_id: $.variant_id
           employee_id: $.employee_id
+          preferred_time: $.preferred_time
         select: *a1
         map:
           $.slot_token: $.slot_token
@@ -693,7 +705,7 @@ tools:
     selection:
       items_path: $
       id_path: $.id
-      label_path: $.name
+      label_path: $.name_ar
     navigates_to:
       tool: get-availability
       map:

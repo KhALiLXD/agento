@@ -14,6 +14,7 @@ import { mapValues, prepareRequest } from "../execution/mapper.js";
 import { HttpExecutor } from "../http/executor.js";
 import type { ModelAdapter, Usage } from "../models/interface.js";
 import { ProviderModel } from "../models/providers.js";
+import { ConversationResponder } from "../conversation/responder.js";
 import {
   MemoryRateLimiter,
   type RateLimiter,
@@ -108,6 +109,7 @@ interface Turn {
   secrets: string[];
   token?: string;
   debug: Record<string, unknown>;
+  preservePendingOnError?: boolean;
 }
 type Outcome = Omit<
   AgentResult,
@@ -122,6 +124,7 @@ export class AgentRuntime {
   #http: HttpExecutor;
   #model?: ModelAdapter;
   #presentation?: ModelAdapter;
+  #conversation?: ConversationResponder;
   #hook?: RuntimeHook;
   #defaultPresentation: "raw" | "ai" | "both";
   #debug: boolean;
@@ -168,6 +171,15 @@ export class AgentRuntime {
             env,
           })
         : this.#model);
+    const conversationModel = compiled.policies.assistant.conversation
+      .use_presentation_model
+      ? this.#presentation
+      : this.#model;
+    if (conversationModel)
+      this.#conversation = new ConversationResponder(
+        compiled,
+        conversationModel,
+      );
     this.#hook = options.onEvent;
     this.#defaultPresentation = options.presentation ?? "raw";
     this.#debug = options.debug ?? false;
@@ -255,6 +267,7 @@ export class AgentRuntime {
         );
       const pending =
         s.state === "GATHERING_INPUT" ? s.stack[s.stack.length - 1] : undefined;
+      t.preservePendingOnError = Boolean(pending);
       if (!pending) this.#reset(s);
       transition(s, "ROUTING");
       const start = Date.now();
@@ -275,14 +288,93 @@ export class AgentRuntime {
           onCall: () => this.#modelCall(t),
           onUsage: (u) => this.#usage(t, u),
           onCandidates: (c) => {
-            t.debug.routing = { candidates: c };
+            const routing = (t.debug.routing ??= {}) as Record<string, unknown>;
+            routing.candidates = c;
             this.#emit(t, "onCandidatesSelected", { candidates: c });
+          },
+          onLexical: (candidates, durationMs, confident) => {
+            t.metrics.lexicalRetrievalMs += durationMs;
+            const routing = (t.debug.routing ??= {}) as Record<string, unknown>;
+            routing.lexical = { candidates, confident, durationMs };
+            this.#emit(t, "onLexicalRetrievalFinished", {
+              candidates,
+              confident,
+              durationMs,
+            });
+          },
+          onModelRecallStart: () => {
+            t.metrics.modelRecallCalls++;
+            this.#emit(t, "onModelRecallStarted", {});
+          },
+          onModelRecall: (used, candidates, durationMs) => {
+            t.metrics.modelRecallMs += durationMs;
+            const routing = (t.debug.routing ??= {}) as Record<string, unknown>;
+            routing.modelRecall = { used, candidates, durationMs };
+            this.#emit(t, "onModelRecallFinished", {
+              used,
+              candidates,
+              durationMs,
+            });
+          },
+          onToolSelectionStart: () => {
+            t.metrics.toolSelectionCalls++;
+          },
+          onToolSelection: (selected, durationMs) => {
+            t.metrics.toolSelectionMs += durationMs;
+            const routing = (t.debug.routing ??= {}) as Record<string, unknown>;
+            routing.toolSelection = { selected, durationMs };
           },
         },
       );
       t.metrics.routingMs += Date.now() - start;
       if (!routed.call) {
+        const routing = (t.debug.routing ??= {}) as Record<string, unknown>;
+        if (
+          pending &&
+          !this.#compiled.policies.assistant.conversation.enabled
+        ) {
+          transition(s, "GATHERING_INPUT");
+          routing.outcome = "pending-input";
+          return this.#missingInputResult(pending);
+        }
+        if (this.#compiled.policies.assistant.conversation.enabled) {
+          if (!this.#conversation)
+            fail(
+              "MODEL_NOT_CONFIGURED",
+              "Conversation requires a configured ModelAdapter.",
+            );
+          const conversationStarted = Date.now();
+          t.metrics.conversationCalls++;
+          this.#emit(t, "onConversationStarted", {
+            pendingTool: pending?.tool,
+          });
+          let response: string;
+          try {
+            response = await this.#conversation.respond({
+              messages: redact(
+                s.history.length
+                  ? s.history
+                  : [{ role: "user" as const, content: message }],
+                t.secrets,
+              ),
+              pendingTool: pending?.tool,
+              signal: request.signal,
+              secrets: t.secrets,
+              onCall: () => this.#modelCall(t),
+              onUsage: (usage) => this.#usage(t, usage),
+            });
+          } finally {
+            const durationMs = Date.now() - conversationStarted;
+            t.metrics.conversationMs += durationMs;
+            this.#emit(t, "onConversationFinished", { durationMs });
+          }
+          routing.outcome = "conversation";
+          transition(s, pending ? "GATHERING_INPUT" : "COMPLETED");
+          t.preservePendingOnError = false;
+          return { status: "completed", message: response };
+        }
         transition(s, "COMPLETED");
+        routing.outcome = "no-match";
         return {
           status: "error",
           error: new AgentRuntimeError(
@@ -292,6 +384,7 @@ export class AgentRuntime {
         };
       }
       this.#emit(t, "onToolSelected", { tool: routed.call.name });
+      t.preservePendingOnError = false;
       if (pending)
         pending.arguments = { ...pending.arguments, ...routed.call.arguments };
       else s.stack = [this.#frame(routed.call.name, routed.call.arguments)];
@@ -359,6 +452,22 @@ export class AgentRuntime {
     const n = this.#compiled.policies.session.max_history_messages;
     s.history = n ? s.history.slice(-n) : [];
   }
+  #missingInputResult(frame: Frame): Outcome {
+    const validate = this.#compiled.executions.get(frame.tool).validateInput;
+    validate(frame.arguments);
+    const missing = (validate.errors ?? [])
+      .filter((error) => error.keyword === "required")
+      .map(
+        (error) =>
+          error.instancePath + "/" + String(error.params.missingProperty),
+      );
+    return {
+      status: "needs_input",
+      tool: { id: frame.tool },
+      missing,
+      message: "Please provide: " + missing.join(", "),
+    };
+  }
   #emit(t: Turn, name: string, details: Record<string, unknown>) {
     try {
       this.#hook?.({
@@ -416,6 +525,13 @@ export class AgentRuntime {
         retryCount: 0,
         dependencySteps: 0,
         routingMs: 0,
+        lexicalRetrievalMs: 0,
+        modelRecallMs: 0,
+        toolSelectionMs: 0,
+        conversationMs: 0,
+        modelRecallCalls: 0,
+        toolSelectionCalls: 0,
+        conversationCalls: 0,
         httpMs: 0,
       };
     const fallback = (error: unknown): AgentResult => ({
@@ -529,10 +645,14 @@ export class AgentRuntime {
               ...e.details,
               executionMayHaveOccurred: true,
             });
-          transition(s, "FAILED");
-          s.stack = [];
-          delete s.selection;
-          delete s.confirmation;
+          if (t.preservePendingOnError && s.stack.length)
+            transition(s, "GATHERING_INPUT");
+          else {
+            transition(s, "FAILED");
+            s.stack = [];
+            delete s.selection;
+            delete s.confirmation;
+          }
           this.#emit(t, "onError", e.toJSON());
           outcome = { status: "error", error: e.toJSON() };
         }
@@ -727,17 +847,45 @@ export class AgentRuntime {
       selection: { id: s.token, options: s.options },
     };
   }
+  #matchedSelectionIndex(
+    selection: SelectionState,
+    config: NonNullable<ToolConfig["selection"]>,
+    input: Record<string, unknown>,
+  ): number {
+    if (!config.match) return -1;
+    const expected = readPath(input, config.match.input_path);
+    if (typeof expected !== "string" && typeof expected !== "number") return -1;
+    const normalized = String(expected).trim().toLocaleLowerCase();
+    const matches = selection.items
+      .map((item, index) => ({
+        index,
+        value: readPath(item, config.match!.item_path),
+      }))
+      .filter(
+        ({ value }) =>
+          (typeof value === "string" || typeof value === "number") &&
+          String(value).trim().toLocaleLowerCase() === normalized,
+      );
+    return matches.length === 1 ? matches[0].index : -1;
+  }
   #makeSelection(
     t: Turn,
     data: unknown,
     config: NonNullable<ToolConfig["selection"]>,
     expiresAt: number,
+    allowEmpty = false,
   ): SelectionState {
     const items = readPath(data, config.items_path);
-    if (!Array.isArray(items) || items.length === 0 || items.length > 1000)
+    if (
+      !Array.isArray(items) ||
+      (!allowEmpty && items.length === 0) ||
+      items.length > 1000
+    )
       fail(
         "DEPENDENCY_SELECTION_INVALID",
-        "Selection must contain 1–1000 items.",
+        allowEmpty
+          ? "Selection must contain 0–1000 items."
+          : "Selection must contain 1–1000 items.",
         { items_path: config.items_path },
       );
     const options = items.map((item) => {
@@ -915,7 +1063,12 @@ export class AgentRuntime {
           dep.select,
           dependencyExpiry,
         );
-        if (selection.items.length > 1) {
+        const matched = this.#matchedSelectionIndex(
+          selection,
+          dep.select,
+          parent.arguments,
+        );
+        if (selection.items.length > 1 && matched < 0) {
           selection.dependency = dep.tool;
           s.selection = selection;
           transition(s, "AWAITING_SELECTION");
@@ -925,7 +1078,7 @@ export class AgentRuntime {
           t,
           parent,
           dep,
-          selection.items[0],
+          selection.items[matched >= 0 ? matched : 0],
           selection.expiresAt,
         );
       } else this.#applyDependency(t, parent, dep, safe, dependencyExpiry);
@@ -988,13 +1141,19 @@ export class AgentRuntime {
       }
     }
     if (tool.selection && tool.navigates_to) {
-      s.selection = this.#makeSelection(
+      const selection = this.#makeSelection(
         t,
         safe,
         tool.selection,
         Date.now() + 60000,
+        true,
       );
-      s.selection.navigation = tool.navigates_to;
+      if (selection.items.length === 0) {
+        transition(s, "COMPLETED");
+        return result;
+      }
+      s.selection = selection;
+      selection.navigation = tool.navigates_to;
       transition(s, "AWAITING_SELECTION");
       return { ...result, ...this.#selectionResult(s.selection) };
     }

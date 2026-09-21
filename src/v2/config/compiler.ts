@@ -15,6 +15,11 @@ export interface ToolDefinition {
   readonly description: string;
   readonly inputSchema: JsonSchema;
 }
+export interface LightweightToolDefinition {
+  readonly id: string;
+  readonly title?: string;
+  readonly description: string;
+}
 export interface ExecutionDefinition {
   readonly config: ToolConfig;
   readonly validateInput: ValidateFunction;
@@ -45,6 +50,7 @@ export class Registry<T> {
 }
 export interface CompiledAgent {
   readonly tools: Registry<ToolDefinition>;
+  readonly lightweightTools: readonly LightweightToolDefinition[];
   readonly executions: Registry<ExecutionDefinition>;
   readonly dependencyGraph: Readonly<Record<string, readonly string[]>>;
   readonly policies: ResolvedConfig;
@@ -374,6 +380,11 @@ export function compileConfig(
             "Dependency argument sources must use parent input, session, constant, or generated values.",
           );
       }
+      if (dep.select?.match && !schemaAt(schema, dep.select.match.input_path))
+        fail(
+          "CONFIG_MAPPING_INVALID",
+          `Tool ${tool.id} selection match reads an undeclared input.`,
+        );
       for (const target of Object.keys(dep.map)) {
         if (
           target === "$" ||
@@ -411,6 +422,14 @@ export function compileConfig(
             "Navigation maps an undeclared target input.",
           );
     }
+    if (
+      tool.selection?.match &&
+      !schemaAt(schema, tool.selection.match.input_path)
+    )
+      fail(
+        "CONFIG_MAPPING_INVALID",
+        `Tool ${tool.id} selection match reads an undeclared input.`,
+      );
     const inputSchema = structuredClone(schema);
     if (inputSchema.additionalProperties === undefined)
       inputSchema.additionalProperties = false;
@@ -462,6 +481,13 @@ export function compileConfig(
   for (const id of ids) visit(id);
   return Object.freeze({
     tools: new Registry(tools),
+    lightweightTools: deepFreeze(
+      config.tools.map((tool) => ({
+        id: tool.id,
+        ...(tool.tool.title ? { title: tool.tool.title } : {}),
+        description: tool.tool.description,
+      })),
+    ),
     executions: new Registry(executions),
     dependencyGraph: deepFreeze(graph),
     policies: deepFreeze(config),

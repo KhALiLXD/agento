@@ -14,12 +14,16 @@ responsible for those decisions.
 ## Boundaries
 
 1. **Compilation:** YAML → strict Zod config validation → AJV draft-07 schema compilation → reference/mapping/cycle checks → frozen definitions. Registry internals use private maps, with no public mutators.
-2. **Retrieval/routing:** reusable lexical index → top K metadata → native tool selection or schema-validated fallback → validate returned name and arguments.
+2. **Retrieval/routing:** reusable lexical index → lightweight multilingual model recall only when confidence is weak → candidate fusion → native tool selection or schema-validated fallback → validate returned name and arguments.
 3. **Orchestration:** explicit states, runtime-owned facts and a stack of dependency frames. Missing user fields are collected before dependency execution. Dependencies may execute only read-only tools.
 4. **Execution:** explicit value sources → prepared request → confirmation for effects → opaque auth forwarding at the transport boundary → bounded HTTP → output schema validation.
-5. **Presentation:** sanitized, projected API facts → optional text model → versioned result. Presentation cannot authorize execution.
+5. **Conversation/presentation:** a valid no-tool route uses a credential-free conversational responder; tool results use sanitized, projected API facts. Neither path can authorize execution.
 
 Model metadata contains only `name`, `description`, and `inputSchema`. It omits URL, auth, headers, timeouts and mapping rules. Top-level dependency-owned fields are removed from the model's input properties; the execution schema still requires them.
+
+The compiler also caches a separate lightweight catalog containing only `id`, optional `title`, and `description`. Semantic recall sees this catalog and the sanitized current message, never endpoint configuration, schemas, session context, facts, API results or credentials. Returned IDs are intersected with the compiled registry before final routing. An empty recall is an intentional no-tool decision; provider failure is not.
+
+Conversation is a runtime mode, not a fake tool. Ordinary chat follows `IDLE → ROUTING → COMPLETED`; a conversational detour while collecting input follows `GATHERING_INPUT → ROUTING → GATHERING_INPUT` and retains the frame and gathered arguments. Final execution, validation, dependencies, confirmation, authentication and HTTP mapping remain deterministic.
 
 ## Modules
 

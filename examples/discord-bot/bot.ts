@@ -133,17 +133,20 @@ async function onMessage(message: Message) {
   const reference = message.reference?.messageId
     ? await message.fetchReference().catch(() => undefined)
     : undefined;
+  const input = message.content.replace(/<@!?\d+>/g, "").trim();
+  const command = input.toLocaleLowerCase().replace(/^\//, "-");
+  const isCommand = ["-tools", "-reset", "-cancel"].includes(command);
   if (
     !message.mentions.has(client.user!.id) &&
-    reference?.author.id !== client.user!.id
+    reference?.author.id !== client.user!.id &&
+    !isCommand
   )
     return;
   if (processed.has(message.id)) return;
   processed.add(message.id);
   setTimeout(() => processed.delete(message.id), 60_000).unref();
-  const input = message.content.replace(/<@!?\d+>/g, "").trim();
   if (!input) {
-    await message.reply("اطلب خدمة، أو اكتب /tools لعرض الأدوات.");
+    await message.reply("اطلب خدمة، أو اكتب -tools لعرض الأدوات.");
     return;
   }
   const request = base(message.channelId, message.author.id);
@@ -161,7 +164,7 @@ async function onMessage(message: Message) {
     }
   }
   if ("sendTyping" in message.channel) await message.channel.sendTyping();
-  if (input === "/tools") {
+  if (command === "-tools") {
     await message.reply(
       runtime
         .listTools()
@@ -170,14 +173,14 @@ async function onMessage(message: Message) {
     );
     return;
   }
-  if (input === "/reset") {
+  if (command === "-reset") {
     await runtime.clearSession(request.sessionId);
     prompts.clear(request.sessionId);
     await message.reply("تم مسح الجلسة.");
     return;
   }
   const result =
-    input === "/cancel"
+    command === "-cancel"
       ? await runtime.cancel(request)
       : await runtime.chat({ ...request, message: input });
   prompts.update(result);

@@ -10,7 +10,11 @@ export type {
   SelectionRequest,
 } from "./runtime/agent-runtime.js";
 export { compileConfig, parseConfig } from "./config/compiler.js";
-export type { CompiledAgent, ToolDefinition } from "./config/compiler.js";
+export type {
+  CompiledAgent,
+  ToolDefinition,
+  LightweightToolDefinition,
+} from "./config/compiler.js";
 export type {
   AgentConfigV2,
   ToolConfig,
@@ -46,12 +50,17 @@ export type {
   Usage,
   ToolCall,
 } from "./models/interface.js";
-export { LexicalToolRetriever } from "./tools/retriever.js";
+export {
+  LexicalToolRetriever,
+  normalizeForRetrieval,
+} from "./tools/retriever.js";
 export type {
   ToolRetriever,
   ToolCandidate,
   RetrievalContext,
 } from "./tools/retriever.js";
+export { SemanticToolRecall } from "./tools/semantic-recall.js";
+export type { SemanticRecallResult } from "./tools/semantic-recall.js";
 export { evaluateRouting } from "./tools/evaluation.js";
 export type { RoutingFixture } from "./tools/evaluation.js";
 export { createMcpAdapter } from "./mcp/adapter.js";

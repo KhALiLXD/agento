@@ -118,7 +118,14 @@ test("known secrets in config descriptions, instructions, user messages and API 
   t.request.auth = { type: "api-key", env: "KEY" };
   t.response = { instructions: "Present " + secret };
   const model = {
-    capabilities: () => ({ nativeTools: true }),
+    capabilities: () => ({ nativeTools: true, structuredOutput: true }),
+    generateStructured: async (r) => {
+      seen.push(r);
+      return {
+        data: { candidates: ["read"] },
+        usage: { inputTokens: 1, outputTokens: 1 },
+      };
+    },
     selectTool: async (r) => {
       seen.push(r);
       return {
