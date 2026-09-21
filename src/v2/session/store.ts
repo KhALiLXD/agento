@@ -1,5 +1,6 @@
 import type { ModelMessage } from "../models/interface.js";
 import type { PreparedRequest } from "../execution/mapper.js";
+import type { ValueSource } from "../config/schema.js";
 import type { RuntimeState } from "../runtime/state.js";
 import { fail } from "../errors.js";
 export interface RuntimeFact {
@@ -25,13 +26,19 @@ export interface SelectionState {
   options: Array<{ id: string; label: string }>;
   expiresAt: number;
   dependency?: string;
-  navigation?: { tool: string; map: Record<string, string> };
+  navigation?: {
+    tool: string;
+    arguments: Record<string, ValueSource>;
+    map: Record<string, string>;
+    sourceArguments: Record<string, unknown>;
+  };
 }
 export interface ConfirmationState {
   token: string;
   hash: string;
   prepared: PreparedRequest;
   expiresAt: number;
+  preview?: Record<string, unknown>;
 }
 export interface SessionStateV2 {
   id: string;
@@ -45,6 +52,7 @@ export interface SessionStateV2 {
   confirmation?: ConfirmationState;
   context: Record<string, unknown>;
   configHash: string;
+  lastUserMessage?: string;
 }
 /** transact MUST serialize the entire async operation across all runtime instances sharing this store.
  * A Redis/DB implementation needs a renewable distributed lock/fencing, not just get+set. */

@@ -36,6 +36,18 @@ const source = z.union([
     .strict(),
 ]);
 const mapping = z.record(name, source);
+const timezone = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: value }).format();
+      return true;
+    } catch {
+      return false;
+    }
+  }, "Invalid IANA timezone");
 const selection = z
   .object({
     items_path: pathSchema,
@@ -155,6 +167,7 @@ export const toolSchema = z
           .object({
             required: z.boolean().default(false),
             ttl_ms: positive.default(300000),
+            preview: mapping.default({}),
           })
           .strict()
           .default({}),
@@ -176,7 +189,11 @@ export const toolSchema = z
       )
       .default([]),
     navigates_to: z
-      .object({ tool: name, map: z.record(pathSchema, pathSchema) })
+      .object({
+        tool: name,
+        arguments: mapping.default({}),
+        map: z.record(pathSchema, pathSchema),
+      })
       .strict()
       .optional(),
     selection: selection.optional(),
@@ -210,6 +227,7 @@ export const configSchema = z
       .object({
         name: z.string().trim().min(1).max(100).optional(),
         language: z.string().trim().min(1).default("auto"),
+        timezone: timezone.default("UTC"),
         system_prompt: z
           .string()
           .default(

@@ -96,3 +96,39 @@ test("reject duplicate YAML keys", () =>
     () => compileConfig('version: "2"\nversion: "2"'),
     (e) => e.code === "CONFIG_INVALID",
   ));
+test("compiler validates navigation argument carry, preview mappings and timezones", () => {
+  const source = tool("source");
+  source.tool.input_schema.properties.notes = { type: "string" };
+  source.selection = { items_path: "$", id_path: "$.id", label_path: "$.name" };
+  source.navigates_to = {
+    tool: "target",
+    arguments: { notes: "$.notes" },
+    map: { "$.q": "$.value" },
+  };
+  const target = tool("target");
+  target.tool.input_schema.properties.notes = { type: "string" };
+  target.behavior = {
+    confirmation: { preview: { notes: "$.notes" } },
+  };
+  const compiled = compileConfig({
+    version: "2",
+    assistant: { timezone: "Asia/Riyadh" },
+    tools: [source, target],
+  });
+  assert.equal(compiled.policies.assistant.timezone, "Asia/Riyadh");
+  const conflicting = structuredClone(source);
+  conflicting.navigates_to.map["$.notes"] = "$.other";
+  assert.throws(
+    () => compileConfig(config(conflicting, target)),
+    (error) => error.code === "CONFIG_NAVIGATION_INVALID",
+  );
+  assert.throws(
+    () =>
+      compileConfig({
+        version: "2",
+        assistant: { timezone: "Mars/Olympus" },
+        tools: [tool()],
+      }),
+    (error) => error.code === "CONFIG_INVALID",
+  );
+});

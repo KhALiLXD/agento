@@ -4,7 +4,7 @@
 
 ## Assistant and routing
 
-`assistant.system_prompt` controls global persona, tone and casual conversation. It is separate from `tool.response.instructions`, which controls presentation only after an API executes. `assistant.language: auto` asks the model to respond primarily in the current user's language; it does not translate structured arguments. Conversation is enabled by default and can be disabled with `assistant.conversation.enabled: false`.
+`assistant.system_prompt` controls the global persona and tone for conversation and tool-result presentation. `tool.response.instructions` adds tool-specific presentation rules after an API executes. `assistant.language: auto` asks the model to respond primarily in the last meaningful user language; numeric selections do not replace that language anchor. `assistant.timezone` is a trusted IANA timezone used to resolve relative dates and defaults to `UTC`. Conversation is enabled by default and can be disabled with `assistant.conversation.enabled: false`.
 
 Routing has two retrieval stages:
 
@@ -18,6 +18,7 @@ No tool and no lexical candidate are different outcomes. A successful recall/sel
 ```yaml
 assistant:
   language: auto
+  timezone: Asia/Riyadh
   system_prompt: |
     Respond naturally. Do not invent application facts.
   conversation:
@@ -74,9 +75,9 @@ depends_on:
 
 `when: missing` resolves a dependency only when a mapped destination is absent from host/navigation inputs. The default `when: always` refreshes/resolves the dependency even with supplied destination values. Once resolved, cached dependency data still obeys its TTL.
 
-Dependency map keys are **parent destination paths**, values are **dependency output paths**. This is the reverse of legacy `field_mapping`. Selection paths must be configured; no `id/name/title` heuristic exists. One item is selected automatically for a dependency, multiple items pause for selection, and an empty or malformed set fails explicitly. Duplicate option IDs are rejected.
+Dependency map keys are **parent destination paths**, values are **dependency output paths**. This is the reverse of legacy `field_mapping`. Selection paths must be configured; no `id/name/title` heuristic exists. A single result is selected automatically only when there is no conflicting explicit preference. Empty result sets return a normal input-needed outcome, while malformed sets fail explicitly. Duplicate option IDs are rejected.
 
-An optional deterministic `selection.match` can connect a user-owned preference extracted into tool input with a field returned by the API. A unique exact match is selected automatically; zero or multiple matches still require explicit selection. The model never supplies the server-owned selected ID.
+An optional deterministic `selection.match` can connect a user-owned preference extracted into tool input with a field returned by the API. A unique exact match is selected automatically; zero matches display alternatives without silently selecting one, and multiple matches ask the user to distinguish them. The model never supplies the server-owned selected ID. In chat, a bare Western or Arabic-Indic number selects the displayed one-based ordinal; `runtime.select({ choice })` continues to require the real option ID.
 
 ```yaml
 selection:
@@ -88,7 +89,31 @@ selection:
     item_path: $.start_time
 ```
 
-Facts store source, producing tool, creation time and expiry. Dependency results are cached against arguments and session context. Expired facts are removed; successful side effects invalidate cached facts. Confirmation expiry cannot outlive its dependency data, including expiry inherited from a multi-level chain. Selection is bound to the server-owned session and context. Internal dependency-owned inputs are omitted from confirmation previews. Navigation is explicit and selection-based; dependency graphs, not navigation paths, are required to be acyclic.
+Facts store source, producing tool, creation time and expiry. Dependency results are cached against arguments and session context. Expired facts are removed; successful side effects invalidate cached facts. Confirmation expiry cannot outlive its dependency data, including expiry inherited from a multi-level chain. Selection is bound to the server-owned session and context. Navigation is explicit and selection-based; dependency graphs, not navigation paths, are required to be acyclic.
+
+Navigation may carry only explicitly declared source-frame arguments. `arguments` reads the source tool input while `map` reads the selected API item. The compiler rejects target collisions:
+
+```yaml
+navigates_to:
+  tool: book
+  arguments:
+    date: $.date
+    notes: $.notes
+  map:
+    $.slot_token: $.slot_token
+```
+
+Side-effect tools can declare a safe confirmation preview. The runtime creates the preview from the same input/dependency context as the prepared request, stores it with the confirmation, and includes it in confirmation integrity checks. Technical tokens stay absent unless explicitly mapped:
+
+```yaml
+behavior:
+  effect: side-effect
+  confirmation:
+    required: true
+    preview:
+      date: $.date
+      notes: $.notes
+```
 
 ## Authentication mapping
 

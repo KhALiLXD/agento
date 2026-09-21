@@ -87,3 +87,46 @@ test("selection page changes retain the selection; an approval action cannot reu
     undefined,
   );
 });
+test("superseded and cleared prompt replies remain identifiable as stale", () => {
+  const prompts = new PromptRegistry(),
+    old = confirmation(),
+    current = confirmation("request-b", "confirmation-b");
+  prompts.update(old, "ar");
+  prompts.remember("old", "alice", old, "ar");
+  prompts.update(current, "ar");
+  prompts.remember("new", "alice", current, "ar");
+  assert.equal(prompts.resolveReply("old", "alice", "s").state, "stale");
+  assert.equal(prompts.resolveReply("new", "bob", "s").state, "forbidden");
+  prompts.clear("s");
+  assert.equal(prompts.resolveReply("new", "alice", "s").state, "stale");
+});
+test("unknown actions do not consume a current prompt", () => {
+  const prompts = new PromptRegistry(),
+    result = {
+      sessionId: "s",
+      requestId: "r",
+      status: "needs_selection",
+      selection: { id: "pick", expiresAt: Date.now() + 60_000 },
+    };
+  prompts.update(result);
+  prompts.remember("m", "alice", result);
+  assert.equal(
+    prompts.resolve("m", "alice", "s", "bogus", "pick", true),
+    undefined,
+  );
+  assert.ok(prompts.resolve("m", "alice", "s", "select", "pick", true));
+});
+test("runtime prompt expiry is authoritative in Discord", () => {
+  let now = 100;
+  const prompts = new PromptRegistry({ now: () => now }),
+    result = {
+      sessionId: "s",
+      requestId: "r",
+      status: "needs_selection",
+      selection: { id: "pick", expiresAt: 200 },
+    };
+  prompts.update(result);
+  prompts.remember("m", "alice", result);
+  now = 201;
+  assert.equal(prompts.resolve("m", "alice", "s", "select", "pick"), undefined);
+});

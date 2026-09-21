@@ -82,7 +82,10 @@ test("empty optional navigation results complete without a selection error", asy
     id: "details",
     tool: {
       description: "Get service details",
-      input_schema: input({ service_id: { type: "string" } }, ["service_id"]),
+      input_schema: input(
+        { service_id: { anyOf: [{ type: "string" }, { type: "integer" }] } },
+        ["service_id"],
+      ),
     },
     request: {
       method: "GET",
@@ -343,4 +346,301 @@ test("output schema rejection is distinct from routing errors", async () => {
     "TOOL_OUTPUT_SCHEMA_VIOLATION",
   );
   r.dispose();
+});
+test("tool presentation and canonical options are preserved without repeated calls", async () => {
+  const source = structuredClone(search);
+  source.selection = {
+    items_path: "$.services",
+    id_path: "$.id",
+    label_path: "$.name",
+  };
+  source.navigates_to = {
+    tool: "details",
+    map: { "$.service_id": "$.id" },
+  };
+  const details = {
+    id: "details",
+    tool: {
+      description: "Details",
+      input_schema: input(
+        { service_id: { anyOf: [{ type: "string" }, { type: "integer" }] } },
+        ["service_id"],
+      ),
+    },
+    request: {
+      method: "GET",
+      url: "https://api.test/details/{service_id}",
+      map: { path: { service_id: "$.service_id" } },
+    },
+  };
+  let httpCalls = 0;
+  let presentationCalls = 0;
+  const runtime = await create([source, details], {
+    presentation: "both",
+    presentationModel: {
+      generateText: async () => {
+        presentationCalls++;
+        return {
+          text: "وجدت خدمتين.",
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
+      },
+    },
+    fetch: async () => {
+      httpCalls++;
+      return Response.json({
+        services: [
+          { id: "17", name: "الأولى" },
+          { id: "42", name: "الثانية" },
+        ],
+      });
+    },
+  });
+  const result = await runtime.invoke({
+    sessionId: "present-selection",
+    tool: "search",
+    arguments: { q: "شعر" },
+  });
+  assert.equal(result.status, "needs_selection");
+  assert.match(result.message, /وجدت خدمتين/);
+  assert.match(result.message, /1\. الأولى/);
+  assert.deepEqual(
+    result.selection.options.map((option) => option.id),
+    ["17", "42"],
+  );
+  assert.equal(typeof result.selection.expiresAt, "number");
+  assert.equal(httpCalls, 1);
+  assert.equal(presentationCalls, 1);
+  runtime.dispose();
+});
+test("chat ordinals use displayed order while select keeps real ID semantics", async () => {
+  const source = structuredClone(search);
+  source.selection = { items_path: "$", id_path: "$.id", label_path: "$.name" };
+  source.navigates_to = { tool: "details", map: { "$.service_id": "$.id" } };
+  const details = {
+    id: "details",
+    tool: {
+      description: "Details",
+      input_schema: input(
+        { service_id: { anyOf: [{ type: "string" }, { type: "integer" }] } },
+        ["service_id"],
+      ),
+    },
+    request: {
+      method: "GET",
+      url: "https://api.test/details/{service_id}",
+      map: { path: { service_id: "$.service_id" } },
+    },
+  };
+  const urls = [];
+  const model = { capabilities: () => ({ nativeTools: true }) };
+  const runtime = await create([source, details], {
+    model,
+    fetch: async (url) => {
+      urls.push(String(url));
+      return String(url).includes("/search")
+        ? Response.json([
+            { id: 17, name: "أ" },
+            { id: 42, name: "ب" },
+            { id: 90, name: "ج" },
+          ])
+        : Response.json({ ok: true });
+    },
+  });
+  const first = await runtime.invoke({
+    sessionId: "ordinal",
+    tool: "search",
+    arguments: { q: "x" },
+  });
+  const second = await runtime.chat({ sessionId: "ordinal", message: "٢" });
+  assert.equal(second.status, "completed", JSON.stringify(second));
+  assert.match(urls.at(-1), /details\/42/);
+  const again = await runtime.invoke({
+    sessionId: "id-api",
+    tool: "search",
+    arguments: { q: "x" },
+  });
+  await runtime.select({
+    sessionId: "id-api",
+    selectionId: again.selection.id,
+    choice: "42",
+  });
+  assert.match(urls.at(-1), /details\/42/);
+  assert.equal(first.selection.options[1].id, "42");
+  runtime.dispose();
+});
+test("explicit selection mismatch never auto-selects the only alternative", async () => {
+  const availability = {
+    id: "availability",
+    tool: {
+      description: "Availability",
+      input_schema: input({ preferred: { type: "string" } }, ["preferred"]),
+    },
+    request: { method: "GET", url: "https://api.test/slots", map: {} },
+  };
+  const booking = structuredClone(action);
+  booking.tool.input_schema.properties.preferred = { type: "string" };
+  booking.tool.input_schema.required.push("preferred");
+  booking.depends_on = [
+    {
+      tool: "availability",
+      arguments: { preferred: "$.preferred" },
+      select: {
+        items_path: "$.slots",
+        id_path: "$.id",
+        label_path: "$.time",
+        match: { input_path: "$.preferred", item_path: "$.time" },
+      },
+      map: { "$.slot": "$.id" },
+    },
+  ];
+  const runtime = await create([availability, booking], {
+    fetch: async () => Response.json({ slots: [{ id: "ten", time: "10:00" }] }),
+  });
+  const result = await runtime.invoke({
+    sessionId: "time-mismatch",
+    tool: "book",
+    arguments: { preferred: "11:00" },
+  });
+  assert.equal(result.status, "needs_selection");
+  assert.match(result.message, /unavailable/i);
+  assert.equal(result.confirmation, undefined);
+  runtime.dispose();
+});
+test("navigation carries declared inputs and builds a safe bound confirmation preview", async () => {
+  const slots = {
+    id: "slots",
+    tool: {
+      description: "Slots",
+      input_schema: input(
+        { date: { type: "string" }, notes: { type: "string" } },
+        ["date"],
+      ),
+    },
+    request: { method: "GET", url: "https://api.test/slots", map: {} },
+    selection: { items_path: "$", id_path: "$.id", label_path: "$.label" },
+    navigates_to: {
+      tool: "book",
+      arguments: { date: "$.date", notes: "$.notes" },
+      map: { "$.slot": "$.token" },
+    },
+  };
+  const booking = structuredClone(action);
+  booking.tool.input_schema.properties.date = { type: "string" };
+  booking.behavior.confirmation.preview = {
+    date: "$.date",
+    notes: "$.notes",
+  };
+  const runtime = await create([slots, booking], {
+    fetch: async () =>
+      Response.json([{ id: "one", label: "10:00", token: "secret-slot" }]),
+  });
+  const first = await runtime.invoke({
+    sessionId: "carry",
+    tool: "slots",
+    arguments: { date: "2026-10-01", notes: "هدوء" },
+  });
+  const confirmation = await runtime.select({
+    sessionId: "carry",
+    selectionId: first.selection.id,
+    choice: "one",
+  });
+  assert.equal(confirmation.status, "needs_confirmation");
+  assert.deepEqual(confirmation.confirmation.preview, {
+    date: "2026-10-01",
+    notes: "هدوء",
+  });
+  assert.equal(JSON.stringify(confirmation).includes("secret-slot"), false);
+  runtime.dispose();
+});
+test("a new routed request invalidates an old pending selection", async () => {
+  const browse = structuredClone(search);
+  browse.trigger_hints = ["browse hair"];
+  browse.selection = { items_path: "$", id_path: "$.id", label_path: "$.name" };
+  browse.navigates_to = { tool: "details", map: { "$.service_id": "$.id" } };
+  const details = {
+    id: "details",
+    tool: {
+      description: "Details",
+      input_schema: input({ service_id: { type: "string" } }, ["service_id"]),
+    },
+    request: {
+      method: "GET",
+      url: "https://api.test/details/{service_id}",
+      map: { path: { service_id: "$.service_id" } },
+    },
+  };
+  const nails = {
+    id: "nails",
+    tool: { description: "Nail services", input_schema: input() },
+    trigger_hints: ["show nails"],
+    request: { method: "GET", url: "https://api.test/nails", map: {} },
+  };
+  const model = {
+    capabilities: () => ({ nativeTools: true }),
+    selectTool: async ({ tools }) => ({
+      call: { name: tools[0].name, arguments: {} },
+      usage: { inputTokens: 1, outputTokens: 1 },
+    }),
+  };
+  const runtime = await AgentRuntime.create({
+    config: {
+      version: "2",
+      routing: { semantic_recall: { enabled: false } },
+      tools: [browse, details, nails],
+    },
+    model,
+    fetch: async (url) =>
+      String(url).endsWith("/search?q=x&limit=10")
+        ? Response.json([{ id: "hair", name: "Hair" }])
+        : Response.json({ ok: true }),
+  });
+  const pending = await runtime.invoke({
+    sessionId: "switch",
+    tool: "search",
+    arguments: { q: "x" },
+  });
+  assert.equal(pending.status, "needs_selection");
+  const replacement = await runtime.chat({
+    sessionId: "switch",
+    message: "show nails",
+  });
+  assert.equal(replacement.status, "completed", JSON.stringify(replacement));
+  assert.equal(replacement.tool.id, "nails");
+  const stale = await runtime.select({
+    sessionId: "switch",
+    selectionId: pending.selection.id,
+    choice: "hair",
+  });
+  assert.equal(stale.error.code, "INPUT_SELECTION_STALE");
+  runtime.dispose();
+});
+test("relative-date routing uses the configured timezone and injected clock", async () => {
+  const dated = structuredClone(search);
+  dated.trigger_hints = ["tomorrow hair"];
+  let system;
+  const runtime = await AgentRuntime.create({
+    config: {
+      version: "2",
+      assistant: { timezone: "Asia/Riyadh" },
+      routing: { semantic_recall: { enabled: false } },
+      tools: [dated],
+    },
+    now: () => new Date("2026-09-21T22:30:00Z"),
+    model: {
+      capabilities: () => ({ nativeTools: true }),
+      selectTool: async (request) => {
+        system = request.system;
+        return {
+          call: { name: "search", arguments: { q: "hair" } },
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
+      },
+    },
+    fetch: async () => Response.json([]),
+  });
+  await runtime.chat({ sessionId: "timezone", message: "tomorrow hair" });
+  assert.match(system, /Asia\/Riyadh/);
+  assert.match(system, /2026-09-22/);
+  runtime.dispose();
 });

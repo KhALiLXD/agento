@@ -1,8 +1,28 @@
 # Real salon API at localhost:3000. Set AGENTO_API_BASE_URL to override the base URL.
-# List responses below use bare arrays ($), preserving the original example contract.
-# For wrapped lists change items_path to the exact response path, e.g. $.data.
-# Availability selection expects { slot_token, start_at }; adjust label_path to your API.
+# Response paths follow the documented API envelopes. Verify item fields against sanitized
+# staging samples before using this example for live bookings.
 version: "2"
+assistant:
+  name: Rozy
+  language: auto
+  timezone: Asia/Riyadh
+  system_prompt: |
+    أنتِ روزي، مساعدة استقبال لصالون نسائي.
+    تحدثي مع العميلة بود واحترام وبصيغة المؤنث، بجمل واضحة ومختصرة.
+    طابقي لغة العميلة، واستخدمي عربية طبيعية عندما تتحدث بالعربية.
+    لا تبالغي في الألقاب أو الإيموجي، ولا تكرري الترحيب في كل رد.
+    ساعدي العميلة على فهم الخدمات والمقارنة بينها واختيار ما يناسب طلبها.
+    اسألي عن معلومة واحدة لازمة في كل مرة قدر الإمكان.
+    لا تدفعي كل محادثة مباشرة إلى الحجز؛ قد تريد العميلة الاستفسار فقط.
+    لا تختلقي خدمة أو سعرًا أو عرضًا أو مدة أو نتيجة علاج أو موعدًا متاحًا.
+    لا تخلطي توفر الخدمة في الكتالوج مع توفر موعد لتنفيذها.
+    لا تطلبي IDs أو tokens أو كلمات مرور من العميلة داخل المحادثة.
+    لا تقولي إن الحجز تم قبل نجاح الأداة، واعرضي الحالة الفعلية للنتيجة.
+    قبل الحجز اعرضي ملخصًا واضحًا واطلبي التأكيد عبر الآلية المعتمدة.
+  conversation:
+    enabled: true
+    include_capability_summary: true
+    use_presentation_model: true
 models:
   routing:
     provider: openai
@@ -89,6 +109,8 @@ tools:
           limit:
             type: integer
             description: Maximum number of matching services to return
+            minimum: 1
+            maximum: 30
         required:
           - q
         additionalProperties: false
@@ -108,9 +130,13 @@ tools:
       - I am looking for a service
       - I need a service for
       - services related to
-      - services for
       - do you have anything for
       - what is available for
+      - شو خدمات الشعر عندكم
+      - عندكم صبغة
+      - بدي مناكير
+      - عندكم مناكير
+      - ابحثي عن خدمة
     request:
       method: GET
       url: http://localhost:3000/api/catalog/services/search
@@ -204,6 +230,9 @@ tools:
       - list categories
       - types of services
       - service categories
+      - شو عندكم
+      - ورجيني الأقسام
+      - بدي أشوف خدماتكم
     request:
       method: GET
       url: http://localhost:3000/api/catalog/categories
@@ -228,20 +257,21 @@ tools:
     navigates_to:
       tool: get-groups
       map:
-        $.search: $.name_ar
+        $.slug: $.slug
   - id: get-groups
     tool:
       title: Browse Service Groups
       description:
-        Use when user wants to see specific group of services in a category (like body care,
-        hair, nails, etc). Use the search parameter to filter by category name.
+        Browse groups only for a category selected from the catalog. The slug must come from
+        that trusted category selection; do not ask the customer for it.
       input_schema:
         type: object
         properties:
-          search:
+          slug:
             type: string
-            description: Search term
-        required: []
+            minLength: 1
+            description: Category slug from a catalog selection
+        required: [slug]
         additionalProperties: false
     trigger_hints:
       - show me services in
@@ -259,14 +289,16 @@ tools:
       - skin care
       - makeup
       - body section
+      - ورجيني مجموعات هذا القسم
+      - مجموعات قسم الشعر
     request:
       method: GET
-      url: http://localhost:3000/api/catalog/groups
+      url: http://localhost:3000/api/catalog/categories/{slug}/groups
       timeout_ms: 8000
       map:
-        path: {}
-        query:
-          search: $.search
+        path:
+          slug: $.slug
+        query: {}
         body: {}
     response:
       instructions: >-
@@ -279,7 +311,7 @@ tools:
         IMPORTANT: Use ONLY the groups from the API response. Do not add any services or details
         that are not in the response.
     selection:
-      items_path: $.data
+      items_path: $.groups
       id_path: $.id
       label_path: $.name_ar
     navigates_to:
@@ -299,10 +331,13 @@ tools:
             type: integer
             description: Page number
             default: 1
+            minimum: 1
           limit:
             type: integer
             description: Items per page
             default: 20
+            minimum: 1
+            maximum: 50
           group_id:
             description: Group ID from previous selection
             anyOf:
@@ -346,16 +381,6 @@ tools:
       tool: get-service-details
       map:
         $.service_id: $.id
-    depends_on:
-      - tool: get-groups
-        when: missing
-        select:
-          items_path: $.data
-          id_path: $.id
-          label_path: $.name_ar
-        map:
-          $.group_id: $.id
-        ttl_ms: 60000
   - id: get-service-details
     tool:
       title: Service Details
@@ -393,16 +418,6 @@ tools:
       instructions:
         You are Rozy, a salon assistant. Reply in the user language when available. Use only
         API facts. Present full service details including variants, prices, duration, and images.
-    depends_on:
-      - tool: get-services
-        when: missing
-        select:
-          items_path: $.services
-          id_path: $.id
-          label_path: $.name_ar
-        map:
-          $.service_id: $.id
-        ttl_ms: 60000
   - id: get-service-employees
     tool:
       title: Service Employees
@@ -448,23 +463,35 @@ tools:
         properties:
           date:
             type: string
+            format: date
             description: Appointment date (YYYY-MM-DD)
+          service_id:
+            type: integer
+            minimum: 1
+            description: Service ID from a trusted catalog selection
           variant_id:
             type: integer
+            minimum: 1
             description: Service variant ID
           step:
             type: integer
             description: Time interval in minutes
             default: 15
+            enum: [5, 10, 15, 20, 30]
           employee_id:
             type: integer
+            minimum: 1
             description: Specific employee ID (optional)
+          notes:
+            type: string
+            maxLength: 2000
           preferred_time:
             type: string
             pattern: ^(?:[01]\d|2[0-3]):[0-5]\d$
             description: User's explicitly requested local time normalized to HH:mm
         required:
           - date
+          - service_id
           - variant_id
         additionalProperties: false
     trigger_hints:
@@ -478,6 +505,9 @@ tools:
       - appointments
       - time slots
       - book
+      - شو المواعيد بكرة
+      - في الساعة خمسة
+      - بدي احجز
     request:
       method: GET
       url: http://localhost:3000/api/availability
@@ -503,11 +533,21 @@ tools:
         item_path: $.start_time
     navigates_to:
       tool: book-appointment
+      arguments:
+        date: $.date
+        service_id: $.service_id
+        variant_id: $.variant_id
+        employee_id: $.employee_id
+        preferred_time: $.preferred_time
+        notes: $.notes
       map:
         $.slot_token: $.slot_token
+        $.start_at: $.start_at
     depends_on:
       - tool: get-service-variants
         when: missing
+        arguments:
+          service_id: $.service_id
         select:
           items_path: $
           id_path: $.id
@@ -530,6 +570,10 @@ tools:
           notes:
             type: string
             description: Any special requests
+            maxLength: 2000
+          service_id:
+            type: integer
+            minimum: 1
           date:
             type: string
             format: date
@@ -543,6 +587,9 @@ tools:
             type: string
             pattern: ^(?:[01]\d|2[0-3]):[0-5]\d$
             description: User's explicitly requested local time normalized to HH:mm
+          start_at:
+            type: string
+            description: Display time copied from the selected availability result
         required:
           - slot_token
         additionalProperties: false
@@ -557,6 +604,8 @@ tools:
       - schedule it
       - set up appointment
       - reserve
+      - بدي أحجز
+      - احجزيلي هاي الخدمة
     request:
       method: POST
       url: http://localhost:3000/api/bookings/from-availability
@@ -590,11 +639,16 @@ tools:
       confirmation:
         required: true
         ttl_ms: 120000
+        preview:
+          date: $.date
+          appointment_time: $.start_at
+          notes: $.notes
     depends_on:
       - tool: get-availability
         when: missing
         arguments:
           date: $.date
+          service_id: $.service_id
           variant_id: $.variant_id
           employee_id: $.employee_id
           preferred_time: $.preferred_time
@@ -613,6 +667,13 @@ tools:
             type: integer
             description: Number of appointments
             default: 20
+            minimum: 1
+            maximum: 50
+          offset:
+            type: integer
+            description: Pagination offset
+            default: 0
+            minimum: 0
         required: []
         additionalProperties: false
     trigger_hints:
@@ -629,6 +690,7 @@ tools:
         path: {}
         query:
           limit: $.limit
+          offset: $.offset
         body: {}
       auth:
         type: session
@@ -639,7 +701,7 @@ tools:
   - id: get-featured-services
     tool:
       title: Featured Services
-      description: Use when user wants to see featured or popular services.
+      description: Use only when the user asks for services marked as featured by the API.
       input_schema:
         type: object
         properties:
@@ -647,14 +709,14 @@ tools:
             type: integer
             description: Number of services
             default: 6
+            minimum: 1
+            maximum: 30
         required: []
         additionalProperties: false
     trigger_hints:
       - featured
-      - popular
-      - recommended
-      - best services
-      - top services
+      - الخدمات المميزة
+      - شو الخدمات المميزة
     request:
       method: GET
       url: http://localhost:3000/api/home/featured-services
@@ -677,17 +739,17 @@ tools:
         properties:
           service_id:
             type: integer
+            minimum: 1
             description: Service ID
-          search:
-            type: string
-            description: Search term
-        required: []
+        required: [service_id]
         additionalProperties: false
     trigger_hints:
       - variants
       - options
       - different types
       - price options
+      - شو الخيارات
+      - أي أطوال متوفرة
     request:
       method: GET
       url: http://localhost:3000/api/catalog/service-variants
@@ -696,7 +758,6 @@ tools:
         path: {}
         query:
           service_id: $.service_id
-          search: $.search
         body: {}
     response:
       instructions:
@@ -708,5 +769,7 @@ tools:
       label_path: $.name_ar
     navigates_to:
       tool: get-availability
+      arguments:
+        service_id: $.service_id
       map:
         $.variant_id: $.id

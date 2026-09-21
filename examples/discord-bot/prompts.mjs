@@ -2,22 +2,30 @@
 export class PromptRegistry {
   #messages = new Map();
   #current = new Map();
-  update(result) {
-    this.clear(result.sessionId);
+  #now;
+  constructor(options = {}) {
+    this.#now = options.now ?? Date.now;
+  }
+  update(result, language = "en") {
+    this.#current.delete(result.sessionId);
     if (["needs_selection", "needs_confirmation"].includes(result.status))
       this.#current.set(result.sessionId, {
         requestId: result.requestId,
-        created: Date.now(),
+        expiresAt:
+          result.confirmation?.expiresAt ??
+          result.selection?.expiresAt ??
+          this.#now() + 30 * 60_000,
+        language,
       });
   }
-  remember(messageId, owner, result) {
+  remember(messageId, owner, result, language = "en") {
     this.#prune();
-    if (this.#current.get(result.sessionId)?.requestId !== result.requestId)
-      return;
     this.#messages.set(messageId, {
       owner,
       sessionId: result.sessionId,
       result,
+      language,
+      created: this.#now(),
     });
   }
   get(messageId) {
@@ -26,30 +34,44 @@ export class PromptRegistry {
   }
   resolve(messageId, owner, sessionId, action, id, consume = false) {
     const prompt = this.get(messageId);
-    const expected =
-      action === "confirm" || action === "cancel"
-        ? prompt?.result.confirmation?.id
-        : prompt?.result.selection?.id;
+    if (!prompt || prompt.owner !== owner || prompt.sessionId !== sessionId)
+      return undefined;
+    const selectionAction = action === "select" || action === "page";
+    const confirmationAction = action === "confirm" || action === "cancel";
+    if (!selectionAction && !confirmationAction) return undefined;
+    const expected = confirmationAction
+      ? prompt?.result.confirmation?.id
+      : prompt?.result.selection?.id;
     if (
-      !prompt ||
-      prompt.owner !== owner ||
-      prompt.sessionId !== sessionId ||
       expected !== id ||
-      this.#current.get(sessionId)?.requestId !== prompt.result.requestId
+      this.#current.get(sessionId)?.requestId !== prompt.result.requestId ||
+      this.#current.get(sessionId)?.expiresAt <= this.#now()
     )
       return undefined;
-    if (consume) this.clear(sessionId);
+    if (consume) this.#current.delete(sessionId);
     return prompt;
+  }
+  resolveReply(messageId, owner, sessionId) {
+    const prompt = this.get(messageId);
+    if (!prompt) return { state: "ordinary" };
+    if (prompt.owner !== owner || prompt.sessionId !== sessionId)
+      return { state: "forbidden" };
+    return this.#current.get(sessionId)?.requestId === prompt.result.requestId
+      ? { state: "current", prompt }
+      : { state: "stale", prompt };
   }
   clear(sessionId) {
     this.#current.delete(sessionId);
-    for (const [id, prompt] of this.#messages)
-      if (prompt.sessionId === sessionId) this.#messages.delete(id);
   }
   #prune() {
     for (const [id, state] of this.#current)
-      if (Date.now() - state.created >= 30 * 60_000) this.clear(id);
+      if (state.expiresAt <= this.#now()) this.#current.delete(id);
+    for (const [id, prompt] of this.#messages)
+      if (this.#now() - prompt.created >= 60 * 60_000)
+        this.#messages.delete(id);
     while (this.#current.size > 1000)
       this.clear(this.#current.keys().next().value);
+    while (this.#messages.size > 5000)
+      this.#messages.delete(this.#messages.keys().next().value);
   }
 }

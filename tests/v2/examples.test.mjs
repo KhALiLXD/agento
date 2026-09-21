@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { AgentRuntime, compileConfig } from "../../dist/index.js";
+import {
+  AgentRuntime,
+  LexicalToolRetriever,
+  compileConfig,
+} from "../../dist/index.js";
 import { loadExampleConfig } from "../../examples/shared/config.mjs";
 
 const root = new URL("../../", import.meta.url);
@@ -92,7 +96,7 @@ test("all eleven existing salon endpoints are migrated and booking constants rem
     label_path: "$.name_ar",
   });
   assert.deepEqual(c.executions.get("get-groups").config.selection, {
-    items_path: "$.data",
+    items_path: "$.groups",
     id_path: "$.id",
     label_path: "$.name_ar",
   });
@@ -115,6 +119,23 @@ test("all eleven existing salon endpoints are migrated and booking constants rem
   assert.equal(availability.request.map.query.employee_ids, "$.employee_id");
   assert.equal(availability.request.map.query.variant_id, undefined);
 });
+test("salon Arabic requests have lexical candidates before semantic recall", async () => {
+  const config = await loadExampleConfig(
+    new URL(paths[0], root),
+    { AGENTO_API_BASE_URL: "https://real-api.test" },
+    { direct: true },
+  );
+  const retriever = new LexicalToolRetriever(compileConfig(config));
+  for (const message of [
+    "شو خدمات الشعر عندكم؟",
+    "بدي احجز صبغة بكرة",
+    "عندكم مناكير؟",
+  ])
+    assert.ok(
+      (await retriever.retrieve(message, { limit: 8 })).length > 0,
+      message,
+    );
+});
 test("salon navigation preserves selected IDs, obtains slot data from the API and confirms one real HTTP request", async (t) => {
   const calls = [];
   const server = createServer(async (req, res) => {
@@ -127,9 +148,9 @@ test("salon navigation preserves selected IDs, obtains slot data from the API an
     res.setHeader("content-type", "application/json");
     let data;
     if (url.pathname.endsWith("/categories"))
-      data = [{ id: 1, name_ar: "Hair" }];
-    else if (url.pathname.endsWith("/groups"))
-      data = { ok: true, data: [{ id: 7, name_ar: "Coloring" }] };
+      data = [{ id: 1, slug: "hair", name_ar: "Hair" }];
+    else if (url.pathname.endsWith("/categories/hair/groups"))
+      data = { groups: [{ id: 7, name_ar: "Coloring" }] };
     else if (url.pathname.endsWith("/groups/7/services"))
       data = { ok: true, services: [{ id: 9, name_ar: "Hair color" }] };
     else if (url.pathname.endsWith("/services/9"))
@@ -195,7 +216,7 @@ test("salon navigation preserves selected IDs, obtains slot data from the API an
     calls.map((c) => c.path),
     [
       "/api/catalog/categories",
-      "/api/catalog/groups",
+      "/api/catalog/categories/hair/groups",
       "/api/catalog/groups/7/services",
       "/api/catalog/services/9",
     ],
@@ -205,6 +226,7 @@ test("salon navigation preserves selected IDs, obtains slot data from the API an
     tool: "book-appointment",
     arguments: {
       date: "2026-10-01",
+      service_id: 9,
       preferred_time: "11:00",
       notes: "quiet",
     },

@@ -14,6 +14,13 @@ import dotenv from "dotenv";
 import { AgentRuntime, type AgentResult } from "../../dist/index.js";
 import { loadExampleConfig } from "../shared/config.mjs";
 import { PromptRegistry } from "./prompts.mjs";
+import {
+  chunkMessage,
+  detectLanguage,
+  messagesFor,
+  renderResultText,
+  type DiscordLanguage,
+} from "./renderers.mjs";
 
 dotenv.config({ path: fileURLToPath(new URL("./.env", import.meta.url)) });
 const discordToken = process.env.DISCORD_BOT_TOKEN;
@@ -47,28 +54,13 @@ const client = new Client({
 });
 const prompts = new PromptRegistry();
 const processed = new Set<string>();
+const languages = new Map<string, DiscordLanguage>();
 const base = (channelId: string, userId: string) => ({
   sessionId: `discord_${channelId}_${userId}`,
   ...(userToken && userId === testUserId ? { auth: { token: userToken } } : {}),
   context: { discord: { user_id: userId, channel_id: channelId } },
 });
-function text(result: AgentResult): string {
-  if (result.status === "error") {
-    if (result.error?.code === "AUTH_REJECTED")
-      return result.error.details.status === 403
-        ? "الـ API رفض العملية: ما عندك صلاحية."
-        : "الـ API رفض تسجيل الدخول. حدّث توكن المستخدم وأعد المحاولة.";
-    return `${result.error?.code}: ${result.error?.message}`;
-  }
-  if (result.status === "needs_confirmation")
-    return `تأكيد ${result.tool?.id ?? "العملية"}\n${JSON.stringify(result.confirmation?.preview, null, 2)}\nاضغط تأكيد لتنفيذ الطلب.`;
-  if (result.status === "needs_selection")
-    return [result.message, "اختر من القائمة أو أرسل ID/الاسم الظاهر."]
-      .filter(Boolean)
-      .join("\n");
-  return result.message ?? JSON.stringify(result.data ?? null, null, 2);
-}
-function view(result: AgentResult, page = 0) {
+function view(result: AgentResult, language: DiscordLanguage, page = 0) {
   const components: Array<
     ActionRowBuilder<ButtonBuilder> | ActionRowBuilder<StringSelectMenuBuilder>
   > = [];
@@ -123,10 +115,57 @@ function view(result: AgentResult, page = 0) {
       );
   }
   return {
-    content: text(result).slice(0, 1900),
+    content: renderResultText(result, language),
     components,
     allowedMentions: { parse: [] as [], repliedUser: false },
   };
+}
+async function replyResult(
+  message: Message,
+  result: AgentResult,
+  language: DiscordLanguage,
+) {
+  const rendered = view(result, language);
+  const chunks = chunkMessage(rendered.content, 1900);
+  const responses: Message[] = [];
+  let previous: Message | undefined;
+  for (const [index, content] of chunks.entries()) {
+    const payload = {
+      content,
+      components: index === chunks.length - 1 ? rendered.components : [],
+      allowedMentions: rendered.allowedMentions,
+    };
+    previous = previous
+      ? await previous.reply(payload)
+      : await message.reply(payload);
+    responses.push(previous);
+  }
+  return responses;
+}
+async function editInteractionResult(
+  interaction: Extract<Interaction, { customId: string }>,
+  result: AgentResult,
+  language: DiscordLanguage,
+) {
+  const rendered = view(result, language);
+  const chunks = chunkMessage(rendered.content, 1900);
+  const messages: Message[] = [];
+  const first = await interaction.editReply({
+    content: chunks[0],
+    components: chunks.length === 1 ? rendered.components : [],
+    allowedMentions: rendered.allowedMentions,
+  });
+  messages.push(first);
+  for (let index = 1; index < chunks.length; index++)
+    messages.push(
+      await interaction.followUp({
+        content: chunks[index],
+        components: index === chunks.length - 1 ? rendered.components : [],
+        allowedMentions: rendered.allowedMentions,
+        fetchReply: true,
+      }),
+    );
+  return messages;
 }
 async function onMessage(message: Message) {
   if (message.author.bot || !message.content.trim()) return;
@@ -150,15 +189,22 @@ async function onMessage(message: Message) {
     return;
   }
   const request = base(message.channelId, message.author.id);
+  const language = detectLanguage(
+    input,
+    languages.get(request.sessionId) ?? "en",
+  );
+  languages.set(request.sessionId, language);
   if (reference) {
-    const prompt = prompts.get(reference.id);
-    if (
-      prompt &&
-      (prompt.owner !== message.author.id ||
-        prompt.sessionId !== request.sessionId)
-    ) {
+    const reply = prompts.resolveReply(
+      reference.id,
+      message.author.id,
+      request.sessionId,
+    );
+    if (reply.state === "forbidden" || reply.state === "stale") {
       await message.reply(
-        "ابدأ طلبك بذكر البوت؛ هذا الاختيار مرتبط بصاحب الطلب.",
+        reply.state === "forbidden"
+          ? "هذا الاختيار مرتبط بصاحب الطلب."
+          : "هذه القائمة لم تعد فعالة. استخدمي أحدث رسالة من روزي.",
       );
       return;
     }
@@ -176,6 +222,7 @@ async function onMessage(message: Message) {
   if (command === "-reset") {
     await runtime.clearSession(request.sessionId);
     prompts.clear(request.sessionId);
+    languages.delete(request.sessionId);
     await message.reply("تم مسح الجلسة.");
     return;
   }
@@ -183,9 +230,10 @@ async function onMessage(message: Message) {
     command === "-cancel"
       ? await runtime.cancel(request)
       : await runtime.chat({ ...request, message: input });
-  prompts.update(result);
-  const response = await message.reply(view(result));
-  prompts.remember(response.id, message.author.id, result);
+  prompts.update(result, language);
+  const responses = await replyResult(message, result, language);
+  for (const response of responses)
+    prompts.remember(response.id, message.author.id, result, language);
 }
 async function onInteraction(interaction: Interaction) {
   if (
@@ -210,6 +258,7 @@ async function onInteraction(interaction: Interaction) {
     });
     return;
   }
+  const language = prompt.language;
   if (action === "page") {
     const page = Number(pageText);
     if (
@@ -218,7 +267,9 @@ async function onInteraction(interaction: Interaction) {
       page * 25 >= (prompt.result.selection?.options.length ?? 0)
     )
       return;
-    await interaction.update(view(prompt.result, page));
+    await interaction.update({
+      components: view(prompt.result, language, page).components,
+    });
     return;
   }
   await interaction.deferUpdate();
@@ -243,9 +294,10 @@ async function onInteraction(interaction: Interaction) {
       choice: option.id,
     });
   } else return;
-  prompts.update(result);
-  await interaction.editReply(view(result));
-  prompts.remember(interaction.message.id, interaction.user.id, result);
+  prompts.update(result, language);
+  const responses = await editInteractionResult(interaction, result, language);
+  for (const response of responses)
+    prompts.remember(response.id, interaction.user.id, result, language);
 }
 const queues = new Map<string, Promise<unknown>>();
 function serialize(key: string, run: () => Promise<void>) {

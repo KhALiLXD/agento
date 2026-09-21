@@ -3,10 +3,17 @@ interface Prompt {
   owner: string;
   sessionId: string;
   result: AgentResult;
+  language: "ar" | "en";
 }
 export class PromptRegistry {
-  update(result: AgentResult): void;
-  remember(messageId: string, owner: string, result: AgentResult): void;
+  constructor(options?: { now?: () => number });
+  update(result: AgentResult, language?: "ar" | "en"): void;
+  remember(
+    messageId: string,
+    owner: string,
+    result: AgentResult,
+    language?: "ar" | "en",
+  ): void;
   get(messageId: string): Prompt | undefined;
   resolve(
     messageId: string,
@@ -16,5 +23,13 @@ export class PromptRegistry {
     id: string,
     consume?: boolean,
   ): Prompt | undefined;
+  resolveReply(
+    messageId: string,
+    owner: string,
+    sessionId: string,
+  ):
+    | { state: "ordinary" }
+    | { state: "forbidden" }
+    | { state: "current" | "stale"; prompt: Prompt };
   clear(sessionId: string): void;
 }

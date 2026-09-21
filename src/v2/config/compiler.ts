@@ -415,12 +415,52 @@ export function compileConfig(
       const target = config.tools.find(
         (t) => t.id === tool.navigates_to?.tool,
       )!;
-      for (const path of Object.keys(tool.navigates_to.map))
+      const navigationTargets = new Set<string>();
+      for (const [key, value] of Object.entries(tool.navigates_to.arguments)) {
+        const targetPath = "$." + key;
+        if (!schemaAt(target.tool.input_schema, targetPath))
+          fail(
+            "CONFIG_NAVIGATION_INVALID",
+            "Navigation argument maps an undeclared target input.",
+          );
+        const sourcePath =
+          typeof value === "string"
+            ? value
+            : value.source === "tool-input"
+              ? value.path
+              : undefined;
+        if (sourcePath && !schemaAt(schema, sourcePath))
+          fail(
+            "CONFIG_NAVIGATION_INVALID",
+            "Navigation argument reads an undeclared source input.",
+          );
+        if (typeof value !== "string" && value.source === "dependency")
+          fail(
+            "CONFIG_NAVIGATION_INVALID",
+            "Navigation arguments cannot read dependency results.",
+          );
+        navigationTargets.add(targetPath);
+      }
+      for (const path of Object.keys(tool.navigates_to.map)) {
         if (path === "$" || !schemaAt(target.tool.input_schema, path))
           fail(
             "CONFIG_NAVIGATION_INVALID",
             "Navigation maps an undeclared target input.",
           );
+        if (
+          [...navigationTargets].some(
+            (other) =>
+              other === path ||
+              other.startsWith(path + ".") ||
+              path.startsWith(other + "."),
+          )
+        )
+          fail(
+            "CONFIG_NAVIGATION_INVALID",
+            "Navigation argument and selected-item mappings conflict.",
+          );
+        navigationTargets.add(path);
+      }
     }
     if (
       tool.selection?.match &&
@@ -430,6 +470,40 @@ export function compileConfig(
         "CONFIG_MAPPING_INVALID",
         `Tool ${tool.id} selection match reads an undeclared input.`,
       );
+    for (const [key, value] of Object.entries(
+      tool.behavior.confirmation.preview,
+    )) {
+      if (sensitiveKey(key))
+        fail(
+          "CONFIG_CONFIRMATION_INVALID",
+          "Confirmation preview cannot expose credential-like fields.",
+        );
+      const path =
+        typeof value === "string"
+          ? value
+          : value.source === "tool-input"
+            ? value.path
+            : undefined;
+      if (path && !schemaAt(schema, path))
+        fail(
+          "CONFIG_CONFIRMATION_INVALID",
+          "Confirmation preview reads an undeclared input.",
+        );
+      if (typeof value !== "string" && value.source === "generated")
+        fail(
+          "CONFIG_CONFIRMATION_INVALID",
+          "Confirmation previews cannot contain generated values.",
+        );
+      if (
+        typeof value !== "string" &&
+        value.source === "dependency" &&
+        !tool.depends_on.some((dependency) => dependency.tool === value.tool)
+      )
+        fail(
+          "CONFIG_CONFIRMATION_INVALID",
+          "Confirmation preview reads an undeclared dependency.",
+        );
+    }
     const inputSchema = structuredClone(schema);
     if (inputSchema.additionalProperties === undefined)
       inputSchema.additionalProperties = false;

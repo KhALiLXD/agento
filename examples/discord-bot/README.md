@@ -41,9 +41,10 @@ Enable **Message Content Intent** in your Discord application's Bot settings. In
 ## Behavior
 
 - Mention the bot and ask for categories, services, availability or your appointments.
-- Choose from the dropdown. Lists over 25 items have previous/next buttons. Exact option IDs or labels also work in messages.
+- Choose from the dropdown. Lists over 25 items have previous/next buttons. In chat, `2` and `٢` mean the second displayed option; `runtime.select()` still uses the real ID.
 - Missing inputs are returned by V2 and collected in the following messages.
-- Booking shows a confirmation; only the owner can use its buttons. Each button carries the exact confirmation ID. Old controls cannot confirm or cancel newer requests.
+- Booking shows a confirmation; only the owner can use its buttons. Each button carries the exact confirmation ID. Old controls and replies remain identifiable as stale and cannot affect newer requests.
+- Long output is split across Discord messages without silently cutting the result. Controls are attached only to the final chunk.
 - `/tools` lists tools, `/cancel` cancels the pending flow, `/reset` clears the conversation and retained credential. The configured environment token is supplied again on the next request.
 - `AGENTO_DEBUG=true` prints sanitized runtime events. API 401 and 403 are shown as login/permission rejections.
 
@@ -51,15 +52,18 @@ Enable **Message Content Intent** in your Discord application's Bot settings. In
 
 The YAML keeps the original `http://localhost:3000/api/...` paths. `AGENTO_API_BASE_URL` overrides only the tool URL base; it does not change the model provider URL. For HTTPS deployment remove the HTTP opt-in.
 
-Selection shapes are explicit. The old example expected bare lists, so list `items_path` is `$`. If your actual API returns `{ data: [...] }`, change that setting to `$.data` wherever it is used, including `depends_on.select`.
+Selection shapes are explicit and differ by endpoint. They must be checked against sanitized staging responses before live booking.
 
-| List                                   | ID field       | Label field  |
-| -------------------------------------- | -------------- | ------------ |
-| Categories, groups, services, variants | `$.id`         | `$.name`     |
-| Availability                           | `$.slot_token` | `$.start_at` |
+| List                           | ID field       | Label field  |
+| ------------------------------ | -------------- | ------------ |
+| Categories (bare array)        | `$.id`         | `$.name_ar`  |
+| Groups (`$.groups`)            | `$.id`         | `$.name_ar`  |
+| Search/services (`$.services`) | `$.id`         | `$.name_ar`  |
+| Variants (bare array)          | `$.id`         | `$.name_ar`  |
+| Availability                   | `$.slot_token` | `$.start_at` |
 
 The availability label path is a declared example contract, not a claim about your server: change it if the actual response uses `starts_at`, `label`, or another name. AGENTO does not guess field names. The real API response was not supplied with this repository.
 
-Dependencies marked `when: missing` resolve absent IDs using API data. An ID already produced by navigation is reused. Booking sends the selected `slot_token`, optional `notes`, and the original constants `payment_provider: none`, `currency: SAR`, `hold_minutes: 15`. Write requests make one attempt; enable retry/idempotency only after verifying backend support.
+Category browsing uses `/api/catalog/categories/{slug}/groups`; the slug comes from the selected category. Booking is intentionally single-service: a trusted service selection filters variants, then availability supplies the slot token. Booking sends that token, optional notes, and the constants `payment_provider: none`, `currency: SAR`, `hold_minutes: 15`. Write requests make one attempt; enable retry/idempotency only after verifying backend support. Multi-service requests are not implemented by this example.
 
 For natural-language model testing use the bot normally. To inspect the same API without Discord, use the console examples documented in [the Arabic setup guide](../../docs/RUNNING_AR.md).
