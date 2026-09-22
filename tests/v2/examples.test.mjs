@@ -94,6 +94,7 @@ test("all eleven existing salon endpoints are migrated and booking constants rem
     items_path: "$.services",
     id_path: "$.id",
     label_path: "$.name_ar",
+    facts: { service: "$.name_ar" },
   });
   assert.deepEqual(c.executions.get("get-groups").config.selection, {
     items_path: "$.groups",
@@ -104,12 +105,15 @@ test("all eleven existing salon endpoints are migrated and booking constants rem
     items_path: "$.services",
     id_path: "$.id",
     label_path: "$.name_ar",
+    facts: { service: "$.name_ar" },
   });
   const availability = c.executions.get("get-availability").config;
   assert.deepEqual(availability.selection, {
     items_path: "$.slots",
     id_path: "$.slot_token",
     label_path: "$.start_at",
+    id_sensitive: true,
+    facts: { appointment_time: "$.start_at", local_time: "$.start_time" },
     match: {
       input_path: "$.preferred_time",
       item_path: "$.start_time",
@@ -157,8 +161,20 @@ test("salon navigation preserves selected IDs, obtains slot data from the API an
       data = { ok: true, service: { id: 9, name_ar: "Hair color" } };
     else if (url.pathname.endsWith("/service-variants"))
       data = [
-        { id: 12, name_ar: "Full color" },
-        { id: 13, name_ar: "Roots" },
+        {
+          id: 12,
+          service_id: 9,
+          name_ar: "Full color",
+          price: "20.00",
+          duration_minutes: 25,
+        },
+        {
+          id: 13,
+          service_id: 9,
+          name_ar: "Roots",
+          price: "21.00",
+          duration_minutes: 2,
+        },
       ];
     else if (url.pathname.endsWith("/availability"))
       data = {

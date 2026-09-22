@@ -1,0 +1,12 @@
+[
+  { "input": "مرحبا", "expectedTool": null },
+  { "input": "Hello", "expectedTool": null },
+  { "input": "ورجيني الأقسام", "expectedTool": "get-categories" },
+  { "input": "Show me your categories", "expectedTool": "get-categories" },
+  { "input": "ابحثي عن إزالة شعر الإبط", "expectedTool": "search-services" },
+  { "input": "Find underarm hair removal", "expectedTool": "search-services" },
+  { "input": "ورجيني حجوزاتي", "expectedTool": "get-my-appointments" },
+  { "input": "Show my appointments", "expectedTool": "get-my-appointments" },
+  { "input": "شو الخدمات المميزة", "expectedTool": "get-featured-services" },
+  { "input": "Show featured services", "expectedTool": "get-featured-services" }
+]

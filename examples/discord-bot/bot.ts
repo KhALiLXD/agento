@@ -55,6 +55,30 @@ const client = new Client({
 const prompts = new PromptRegistry();
 const processed = new Set<string>();
 const languages = new Map<string, DiscordLanguage>();
+const controls = new Map<string, { token: string; messages: Message[] }>();
+async function retireControls(sessionId: string, token?: string) {
+  const old = controls.get(sessionId);
+  if (!old || old.token === token) return;
+  controls.delete(sessionId);
+  await Promise.all(
+    old.messages.map((message) =>
+      message.edit({ components: [] }).catch(() => undefined),
+    ),
+  );
+}
+function rememberControls(result: AgentResult, messages: Message[]) {
+  const token = result.selection?.id ?? result.confirmation?.id;
+  if (!token) return;
+  const old = controls.get(result.sessionId);
+  controls.set(result.sessionId, {
+    token,
+    messages: [
+      ...(old?.token === token ? old.messages : []),
+      messages[messages.length - 1],
+    ].slice(-20),
+  });
+  if (controls.size > 1000) void retireControls(controls.keys().next().value!);
+}
 const base = (channelId: string, userId: string) => ({
   sessionId: `discord_${channelId}_${userId}`,
   ...(userToken && userId === testUserId ? { auth: { token: userToken } } : {}),
@@ -70,11 +94,11 @@ function view(result: AgentResult, language: DiscordLanguage, page = 0) {
       new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
           .setCustomId(`agento:confirm:${id}`)
-          .setLabel("تأكيد")
+          .setLabel(language === "ar" ? "تأكيد" : "Confirm")
           .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
           .setCustomId(`agento:cancel:${id}`)
-          .setLabel("إلغاء")
+          .setLabel(language === "ar" ? "إلغاء" : "Cancel")
           .setStyle(ButtonStyle.Secondary),
       ),
     );
@@ -88,11 +112,11 @@ function view(result: AgentResult, language: DiscordLanguage, page = 0) {
         new StringSelectMenuBuilder()
           .setCustomId(`agento:select:${id}`)
           .setPlaceholder(
-            `اختر (${first + 1}–${first + displayed.length} / ${options.length})`,
+            `${language === "ar" ? "اختاري" : "Choose"} (${first + 1}-${first + displayed.length} / ${options.length})`,
           )
           .addOptions(
             displayed.map((o, i) => ({
-              label: o.label.slice(0, 100) || o.id.slice(0, 100),
+              label: `${first + i + 1}. ${o.label}`.slice(0, 100),
               value: String(first + i),
             })),
           ),
@@ -103,12 +127,12 @@ function view(result: AgentResult, language: DiscordLanguage, page = 0) {
         new ActionRowBuilder<ButtonBuilder>().addComponents(
           new ButtonBuilder()
             .setCustomId(`agento:page:${id}:${Math.max(0, page - 1)}`)
-            .setLabel("السابق")
+            .setLabel(language === "ar" ? "السابق" : "Previous")
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(page === 0),
           new ButtonBuilder()
             .setCustomId(`agento:page:${id}:${page + 1}`)
-            .setLabel("التالي")
+            .setLabel(language === "ar" ? "التالي" : "Next")
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(first + 25 >= options.length),
         ),
@@ -190,16 +214,19 @@ async function onMessage(message: Message) {
   }
   const request = base(message.channelId, message.author.id);
   const language = detectLanguage(
-    input,
+    isCommand ? "" : input,
     languages.get(request.sessionId) ?? "en",
   );
   languages.set(request.sessionId, language);
-  if (reference) {
+  while (languages.size > 1000)
+    languages.delete(languages.keys().next().value!);
+  if (reference && !isCommand) {
     const reply = prompts.resolveReply(
       reference.id,
       message.author.id,
       request.sessionId,
     );
+    console.log("Reply state:", reply);
     if (reply.state === "forbidden" || reply.state === "stale") {
       await message.reply(
         reply.state === "forbidden"
@@ -221,6 +248,7 @@ async function onMessage(message: Message) {
   }
   if (command === "-reset") {
     await runtime.clearSession(request.sessionId);
+    await retireControls(request.sessionId);
     prompts.clear(request.sessionId);
     languages.delete(request.sessionId);
     await message.reply("تم مسح الجلسة.");
@@ -231,7 +259,12 @@ async function onMessage(message: Message) {
       ? await runtime.cancel(request)
       : await runtime.chat({ ...request, message: input });
   prompts.update(result, language);
+  await retireControls(
+    request.sessionId,
+    result.selection?.id ?? result.confirmation?.id,
+  );
   const responses = await replyResult(message, result, language);
+  rememberControls(result, responses);
   for (const response of responses)
     prompts.remember(response.id, message.author.id, result, language);
 }
@@ -249,7 +282,7 @@ async function onInteraction(interaction: Interaction) {
     request.sessionId,
     action,
     id,
-    action !== "page",
+    false,
   );
   if (!prompt) {
     await interaction.reply({
@@ -265,13 +298,38 @@ async function onInteraction(interaction: Interaction) {
       !Number.isInteger(page) ||
       page < 0 ||
       page * 25 >= (prompt.result.selection?.options.length ?? 0)
-    )
+    ) {
+      await interaction.reply({
+        content: messagesFor(language).stale,
+        flags: 64,
+      });
       return;
+    }
     await interaction.update({
       components: view(prompt.result, language, page).components,
     });
     return;
   }
+  if (
+    action === "select" &&
+    (!interaction.isStringSelectMenu() ||
+      !/^\d+$/.test(interaction.values[0] ?? "") ||
+      !prompt.result.selection?.options[Number(interaction.values[0])])
+  ) {
+    await interaction.reply({
+      content: messagesFor(language).select,
+      flags: 64,
+    });
+    return;
+  }
+  prompts.resolve(
+    interaction.message.id,
+    interaction.user.id,
+    request.sessionId,
+    action,
+    id,
+    true,
+  );
   await interaction.deferUpdate();
   // Consume the exact displayed prompt. The runtime also rejects expired/replayed IDs.
   let result: AgentResult;
@@ -295,7 +353,12 @@ async function onInteraction(interaction: Interaction) {
     });
   } else return;
   prompts.update(result, language);
+  await retireControls(
+    request.sessionId,
+    result.selection?.id ?? result.confirmation?.id,
+  );
   const responses = await editInteractionResult(interaction, result, language);
+  rememberControls(result, responses);
   for (const response of responses)
     prompts.remember(response.id, interaction.user.id, result, language);
 }

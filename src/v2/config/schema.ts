@@ -24,6 +24,7 @@ const source = z.union([
   pathSchema,
   z.object({ source: z.literal("tool-input"), path: pathSchema }).strict(),
   z.object({ source: z.literal("session"), path: pathSchema }).strict(),
+  z.object({ source: z.literal("selection"), path: pathSchema }).strict(),
   z
     .object({ source: z.literal("dependency"), tool: name, path: pathSchema })
     .strict(),
@@ -36,6 +37,20 @@ const source = z.union([
     .strict(),
 ]);
 const mapping = z.record(name, source);
+const toolReference = z
+  .object({
+    publish: z
+      .object({
+        name,
+        path: pathSchema,
+        ttl_ms: positive.default(600000),
+      })
+      .strict()
+      .optional(),
+    consume: z.record(name, name).optional(),
+  })
+  .strict()
+  .optional();
 const timezone = z
   .string()
   .trim()
@@ -53,6 +68,8 @@ const selection = z
     items_path: pathSchema,
     id_path: pathSchema,
     label_path: pathSchema,
+    facts: z.record(name, pathSchema).optional(),
+    id_sensitive: z.boolean().optional(),
     match: z
       .object({
         input_path: pathSchema,
@@ -160,6 +177,16 @@ export const toolSchema = z
       .strict(),
     behavior: z
       .object({
+        recovery: z
+          .object({
+            refresh_dependency: name,
+            statuses: z
+              .array(z.union([z.literal(409), z.literal(410)]))
+              .min(1)
+              .default([409, 410]),
+          })
+          .strict()
+          .optional(),
         effect: z
           .enum(["read-only", "side-effect", "destructive"])
           .default("read-only"),
@@ -197,10 +224,12 @@ export const toolSchema = z
       .strict()
       .optional(),
     selection: selection.optional(),
+    references: toolReference,
     response: z
       .object({
         output_schema: jsonSchema.optional(),
         items_path: pathSchema.optional(),
+        private_fields: z.array(name).default([]),
         model_view: z
           .object({
             path: pathSchema.default("$"),

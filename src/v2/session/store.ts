@@ -14,6 +14,8 @@ export interface RuntimeFact {
 export interface Frame {
   tool: string;
   arguments: Record<string, unknown>;
+  selectionFacts?: Record<string, unknown>;
+  selectionExpiresAt?: number;
   dependencies: Record<
     string,
     { data: unknown; expiresAt: number; hash: string }
@@ -24,6 +26,8 @@ export interface SelectionState {
   token: string;
   items: unknown[];
   options: Array<{ id: string; label: string }>;
+  facts?: Record<string, unknown>[];
+  language?: "ar" | "en";
   expiresAt: number;
   dependency?: string;
   navigation?: {
@@ -31,6 +35,12 @@ export interface SelectionState {
     arguments: Record<string, ValueSource>;
     map: Record<string, string>;
     sourceArguments: Record<string, unknown>;
+  };
+  publication?: {
+    name: string;
+    path: string;
+    ttl_ms: number;
+    sourceToolId: string;
   };
 }
 export interface ConfirmationState {
@@ -53,6 +63,16 @@ export interface SessionStateV2 {
   context: Record<string, unknown>;
   configHash: string;
   lastUserMessage?: string;
+  references?: Record<
+    string,
+    {
+      value: unknown;
+      expiresAt: number;
+      sourceToolId: string;
+      contextHash: string;
+      facts?: Record<string, unknown>;
+    }
+  >;
 }
 /** transact MUST serialize the entire async operation across all runtime instances sharing this store.
  * A Redis/DB implementation needs a renewable distributed lock/fencing, not just get+set. */

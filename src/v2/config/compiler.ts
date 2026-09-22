@@ -315,6 +315,11 @@ export function compileConfig(
       );
     for (const group of Object.values(tool.request.map))
       for (const value of Object.values(group)) {
+        if (typeof value !== "string" && value.source === "selection")
+          fail(
+            "CONFIG_MAPPING_INVALID",
+            "Selection facts are presentation-only; use explicit execution mappings.",
+          );
         const path =
           typeof value === "string"
             ? value
@@ -338,6 +343,17 @@ export function compileConfig(
       }
     const targets = new Set<string>();
     if (
+      tool.behavior.recovery &&
+      (tool.behavior.effect === "read-only" ||
+        !tool.depends_on.some(
+          (dep) => dep.tool === tool.behavior.recovery!.refresh_dependency,
+        ))
+    )
+      fail(
+        "CONFIG_DEPENDENCY_INVALID",
+        "Recovery requires a declared dependency on a confirmed action.",
+      );
+    if (
       new Set(tool.depends_on.map((d) => d.tool)).size !==
       tool.depends_on.length
     )
@@ -358,6 +374,11 @@ export function compileConfig(
         );
       const upstream = config.tools.find((t) => t.id === dep.tool)!;
       for (const [key, value] of Object.entries(dep.arguments)) {
+        if (typeof value !== "string" && value.source === "selection")
+          fail(
+            "CONFIG_MAPPING_INVALID",
+            "Selection facts cannot supply dependency execution inputs.",
+          );
         if (!schemaAt(upstream.tool.input_schema, "$." + key))
           fail(
             "CONFIG_MAPPING_INVALID",
@@ -417,6 +438,11 @@ export function compileConfig(
       )!;
       const navigationTargets = new Set<string>();
       for (const [key, value] of Object.entries(tool.navigates_to.arguments)) {
+        if (typeof value !== "string" && value.source === "selection")
+          fail(
+            "CONFIG_NAVIGATION_INVALID",
+            "Use selected-item map for navigation inputs.",
+          );
         const targetPath = "$." + key;
         if (!schemaAt(target.tool.input_schema, targetPath))
           fail(
@@ -470,10 +496,104 @@ export function compileConfig(
         "CONFIG_MAPPING_INVALID",
         `Tool ${tool.id} selection match reads an undeclared input.`,
       );
+    if (tool.references) {
+      if (tool.references.publish) {
+        if (
+          tool.references.publish.path === "$" ||
+          tool.references.publish.path
+            .split(".")
+            .some(
+              (part) =>
+                sensitiveKey(part) ||
+                config.tools.some((entry) =>
+                  entry.response.private_fields.includes(part),
+                ),
+            )
+        )
+          fail(
+            "CONFIG_REFERENCES_INVALID",
+            "References cannot publish private fields or whole response items.",
+          );
+        if (
+          !tool.selection &&
+          !config.tools.some((parent) =>
+            parent.depends_on.some((dep) => dep.tool === tool.id && dep.select),
+          )
+        )
+          fail(
+            "CONFIG_REFERENCES_INVALID",
+            "Reference publication requires an explicit selection.",
+          );
+      }
+      if (tool.references.consume) {
+        for (const [inputName, refName] of Object.entries(
+          tool.references.consume,
+        )) {
+          if (!schemaAt(schema, "$." + inputName))
+            fail(
+              "CONFIG_REFERENCES_INVALID",
+              "Reference consume input is not declared.",
+            );
+          if (
+            !config.tools.some(
+              (publisher) => publisher.references?.publish?.name === refName,
+            )
+          )
+            fail(
+              "CONFIG_REFERENCES_INVALID",
+              "Reference consumer has no declared publisher.",
+            );
+          targets.add("$." + inputName);
+        }
+      }
+    }
     for (const [key, value] of Object.entries(
       tool.behavior.confirmation.preview,
     )) {
-      if (sensitiveKey(key))
+      if (typeof value !== "string" && value.source === "selection") {
+        const facts = new Set<string>();
+        const visited = new Set<string>();
+        const gather = (current: ToolConfig): void => {
+          if (visited.has(current.id)) return;
+          visited.add(current.id);
+          for (const selected of [
+            current.selection,
+            ...current.depends_on.map((dep) => dep.select),
+          ])
+            for (const fact of Object.keys(selected?.facts ?? {}))
+              facts.add(fact);
+          for (const dependency of current.depends_on) {
+            const upstream = config.tools.find(
+              (entry) => entry.id === dependency.tool,
+            );
+            if (upstream) gather(upstream);
+          }
+          for (const upstream of config.tools)
+            if (upstream.navigates_to?.tool === current.id) gather(upstream);
+        };
+        gather(tool);
+        if (value.path === "$" || !facts.has(value.path.split(".")[1]))
+          fail(
+            "CONFIG_CONFIRMATION_INVALID",
+            "Confirmation reads an undeclared selection fact.",
+          );
+      }
+      const privateFields = new Set(
+        config.tools.flatMap((entry) => entry.response.private_fields),
+      );
+      const sourcePath =
+        typeof value === "string"
+          ? value
+          : "path" in value
+            ? value.path
+            : undefined;
+      if (
+        sensitiveKey(key) ||
+        privateFields.has(key) ||
+        sourcePath
+          ?.split(".")
+          .some((part) => sensitiveKey(part) || privateFields.has(part))
+      )
         fail(
           "CONFIG_CONFIRMATION_INVALID",
           "Confirmation preview cannot expose credential-like fields.",
@@ -503,6 +623,28 @@ export function compileConfig(
           "CONFIG_CONFIRMATION_INVALID",
           "Confirmation preview reads an undeclared dependency.",
         );
+    }
+    for (const selected of [
+      tool.selection,
+      ...tool.depends_on.map((dep) => dep.select),
+    ]) {
+      if (!selected) continue;
+      const privateFields = new Set(
+        config.tools.flatMap((entry) => entry.response.private_fields),
+      );
+      for (const [key, path] of Object.entries(selected.facts ?? {}))
+        if (
+          sensitiveKey(key) ||
+          privateFields.has(key) ||
+          path === "$" ||
+          path
+            .split(".")
+            .some((part) => sensitiveKey(part) || privateFields.has(part))
+        )
+          fail(
+            "CONFIG_MAPPING_INVALID",
+            "Selection facts cannot expose private fields or entire items.",
+          );
     }
     const inputSchema = structuredClone(schema);
     if (inputSchema.additionalProperties === undefined)

@@ -7,10 +7,14 @@ export class PromptRegistry {
     this.#now = options.now ?? Date.now;
   }
   update(result, language = "en") {
+    const token = result.selection?.id ?? result.confirmation?.id;
+    const current = this.#current.get(result.sessionId);
+    if (token && current?.token === token) return;
     this.#current.delete(result.sessionId);
     if (["needs_selection", "needs_confirmation"].includes(result.status))
       this.#current.set(result.sessionId, {
         requestId: result.requestId,
+        token,
         expiresAt:
           result.confirmation?.expiresAt ??
           result.selection?.expiresAt ??
@@ -20,6 +24,7 @@ export class PromptRegistry {
   }
   remember(messageId, owner, result, language = "en") {
     this.#prune();
+    if (!result.selection && !result.confirmation) return;
     this.#messages.set(messageId, {
       owner,
       sessionId: result.sessionId,
@@ -44,7 +49,8 @@ export class PromptRegistry {
       : prompt?.result.selection?.id;
     if (
       expected !== id ||
-      this.#current.get(sessionId)?.requestId !== prompt.result.requestId ||
+      this.#current.get(sessionId)?.token !==
+        (prompt.result.selection?.id ?? prompt.result.confirmation?.id) ||
       this.#current.get(sessionId)?.expiresAt <= this.#now()
     )
       return undefined;
@@ -56,7 +62,8 @@ export class PromptRegistry {
     if (!prompt) return { state: "ordinary" };
     if (prompt.owner !== owner || prompt.sessionId !== sessionId)
       return { state: "forbidden" };
-    return this.#current.get(sessionId)?.requestId === prompt.result.requestId
+    return this.#current.get(sessionId)?.token ===
+      (prompt.result.selection?.id ?? prompt.result.confirmation?.id)
       ? { state: "current", prompt }
       : { state: "stale", prompt };
   }

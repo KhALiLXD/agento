@@ -68,6 +68,9 @@ export class ToolRouter {
               score: Number.MAX_SAFE_INTEGER,
               source: "pending" as const,
             },
+            ...(await this.retriever.retrieve(message, {
+              limit: this.compiled.policies.routing.candidate_limit,
+            })),
           ]
         : await this.retriever.retrieve(message, {
             limit: this.compiled.policies.routing.candidate_limit,

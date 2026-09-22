@@ -115,6 +115,26 @@ behavior:
       notes: $.notes
 ```
 
+## Selected References
+
+`references.publish` publishes a value from the **chosen API item**, never from the last item in a list or from model arguments. It requires a selection. `references.consume` maps a published name to a declared input; that input is hidden from the routing model. Explicit host/navigation input takes precedence. References are session/context-bound and expire no later than the originating selection. Cancel clears them.
+
+```yaml
+references:
+  publish:
+    name: selected_service
+    path: $.id
+    ttl_ms: 60000
+```
+
+A consuming tool can declare `references.consume: { service_id: selected_service }`. Provide a missing-only dependency to resolve the input when no valid reference exists. The compiler rejects consumers without a declared publisher.
+
+`selection.facts` maps display names to selected-item paths. Only these facts are supplied for pending-option discussion and propagated to confirmation via `{ source: selection, path: $.field }`. This source is presentation-only and cannot supply HTTP, navigation or dependency execution inputs. Optional missing display facts are omitted.
+
+Use `response.private_fields` for API execution secrets. `selection.id_sensitive: true` exposes opaque choice IDs rather than the secret API ID; pass the returned option ID unchanged to `select()`. The original value stays in the internal selected item for execution mappings. Existing selections without this option retain their ID semantics.
+
+`behavior.recovery: { refresh_dependency: availability, statuses: [409, 410] }` permits a confirmed action to refresh a declared read-only dependency after the API rejects a stale request. It never resubmits the write automatically and creates a new selection or confirmation. Other transport failures retain the existing uncertain-execution policy.
+
 ## Authentication mapping
 
 V2 does not verify user JWTs or make business authorization decisions. For

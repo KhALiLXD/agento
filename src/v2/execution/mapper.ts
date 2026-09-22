@@ -6,6 +6,7 @@ export interface MappingContext {
   input: Record<string, unknown>;
   session: Record<string, unknown>;
   dependencies: Record<string, unknown>;
+  selection?: Record<string, unknown>;
 }
 export interface PreparedRequest {
   url: string;
@@ -23,6 +24,8 @@ export function resolveSource(
       return readPath(context.input, source.path);
     case "session":
       return readPath(context.session, source.path);
+    case "selection":
+      return readPath(context.selection, source.path);
     case "dependency":
       return readPath(context.dependencies[source.tool], source.path);
     case "constant":
@@ -39,7 +42,11 @@ export function mapValues(
     Object.entries(mapping).flatMap(([key, source]) => {
       const value = resolveSource(source, context);
       if (value === undefined) {
-        if (typeof source !== "string" && source.source !== "tool-input")
+        if (
+          typeof source !== "string" &&
+          source.source !== "tool-input" &&
+          source.source !== "selection"
+        )
           fail("INPUT_MAPPING_MISSING", "Runtime mapping source is missing.", {
             field: key,
           });

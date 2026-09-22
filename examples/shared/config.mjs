@@ -8,6 +8,10 @@ export async function loadExampleConfig(
   { direct = false } = {},
 ) {
   const config = parseConfig(await readFile(file, "utf8"));
+  if (env.AGENTO_TIMEZONE) {
+    new Intl.DateTimeFormat("en", { timeZone: env.AGENTO_TIMEZONE });
+    config.assistant = { ...config.assistant, timezone: env.AGENTO_TIMEZONE };
+  }
   let base;
   if (env.AGENTO_API_BASE_URL) {
     base = new URL(env.AGENTO_API_BASE_URL);

@@ -130,3 +130,29 @@ test("runtime prompt expiry is authoritative in Discord", () => {
   now = 201;
   assert.equal(prompts.resolve("m", "alice", "s", "select", "pick"), undefined);
 });
+test("side questions preserve existing controls by operation token without extending expiry", () => {
+  let now = 10;
+  const registry = new PromptRegistry({ now: () => now });
+  const first = {
+    sessionId: "s",
+    requestId: "a",
+    status: "needs_selection",
+    selection: { id: "same", expiresAt: 100 },
+  };
+  registry.update(first);
+  registry.remember("first-message", "owner", first);
+  const detour = {
+    ...first,
+    requestId: "b",
+    selection: { ...first.selection, expiresAt: 1000 },
+  };
+  registry.update(detour);
+  registry.remember("second-message", "owner", detour);
+  assert.ok(registry.resolve("first-message", "owner", "s", "select", "same"));
+  assert.ok(registry.resolve("second-message", "owner", "s", "select", "same"));
+  now = 101;
+  assert.equal(
+    registry.resolve("second-message", "owner", "s", "select", "same"),
+    undefined,
+  );
+});

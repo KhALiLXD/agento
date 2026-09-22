@@ -67,3 +67,20 @@ The availability label path is a declared example contract, not a claim about yo
 Category browsing uses `/api/catalog/categories/{slug}/groups`; the slug comes from the selected category. Booking is intentionally single-service: a trusted service selection filters variants, then availability supplies the slot token. Booking sends that token, optional notes, and the constants `payment_provider: none`, `currency: SAR`, `hold_minutes: 15`. Write requests make one attempt; enable retry/idempotency only after verifying backend support. Multi-service requests are not implemented by this example.
 
 For natural-language model testing use the bot normally. To inspect the same API without Discord, use the console examples documented in [the Arabic setup guide](../../docs/RUNNING_AR.md).
+
+## Repeatable Live Checks
+
+After building the library, run these from the repository root:
+
+```powershell
+node --env-file=examples/discord-bot/.env examples/discord-bot/verify-live.mjs
+node --env-file=examples/discord-bot/.env examples/discord-bot/verify-live-chat.mjs
+```
+
+Both scripts reject business API writes. The first checks search, selected-service reference reuse, filtered variants, availability and confirmation against the running API without a model. The second makes billable calls to the configured model and checks an Arabic greeting, search, selection/details and variant browsing without starting a booking. Neither calls `confirm()`.
+
+`AGENTO_TIMEZONE` must be the owner's verified IANA timezone. The example defaults to UTC, not an assumed timezone based on currency. Set `AGENTO_LIVE_DATE` for a repeatable availability date. UTC timestamps remain API timestamps; their timezone is not guessed.
+
+Observed on 2026-09-21 against the local API: categories are arrays with `slug`; category groups use `groups`; group services use `services`/`meta`; details contain `service.ServiceVariants`; variants have integer IDs and string prices; slots include `start_time`, ISO `start_at`, `plan` and a private `slot_token`. An authenticated appointments read returned `200` with `data` and `meta`, while the unauthenticated read returned `401`. These are observed samples, not a complete API schema or proof of production readiness.
+
+The live model initially produced a misleading second numbered list. Selection presentation now receives only the option count; the runtime renders the canonical list. The repeated Arabic check passed after this correction. A live booking POST, payment status transitions, and Discord gateway/button delivery have not been exercised by these scripts.

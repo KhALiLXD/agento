@@ -39,3 +39,37 @@ test("Discord result renderer preserves runtime messages and complete previews",
   assert.equal(detectLanguage("٢", "ar"), "ar");
   assert.equal(detectLanguage("مرحبا", "en"), "ar");
 });
+test("Discord uses UTF-16 limits and does not render technical confirmations or missing paths", () => {
+  const source = "🙂".repeat(2300);
+  const chunks = chunkMessage(source);
+  assert.equal(chunks.join(""), source);
+  assert.ok(chunks.every((chunk) => chunk.length <= 2000));
+  assert.equal(detectLanguage("٢", "en"), "en");
+  const summary = renderResultText(
+    {
+      status: "needs_confirmation",
+      message: "Review and confirm this action using its confirmation ID.",
+      confirmation: {
+        preview: {
+          service: "Hair",
+          slot_token: "private-value",
+          date: "2026-10-01",
+        },
+      },
+    },
+    "ar",
+  );
+  assert.match(summary, /الخدمة: Hair/);
+  assert.doesNotMatch(summary, /private-value|confirmation ID|\{/);
+  assert.equal(
+    renderResultText(
+      {
+        status: "needs_input",
+        missing: ["/date"],
+        message: "Please provide: /date",
+      },
+      "ar",
+    ),
+    "أي يوم بتحبي يكون الموعد؟",
+  );
+});

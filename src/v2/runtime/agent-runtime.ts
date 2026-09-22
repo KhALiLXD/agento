@@ -237,7 +237,7 @@ export class AgentRuntime {
     return this.#turn(request, async (t) => {
       this.#compiled.executions.get(request.tool);
       this.#reset(t.session);
-      t.session.stack = [this.#frame(request.tool, request.arguments ?? {})];
+      t.session.stack = [this.#frame(request.tool, request.arguments ?? {}, t)];
       transition(t.session, "RESOLVING_DEPENDENCIES");
       return this.#drive(t);
     });
@@ -257,6 +257,7 @@ export class AgentRuntime {
       this.#trim(s);
       if (/^\s*(?:cancel|إلغاء|الغاء)\s*$/i.test(message)) {
         this.#reset(s);
+        delete s.references;
         return { status: "completed", message: "Cancelled." };
       }
       const waitingState = s.state;
@@ -266,7 +267,10 @@ export class AgentRuntime {
       )
         return this.#confirmationResult(t);
       if (s.state === "AWAITING_SELECTION" && s.selection) {
-        if (s.selection.expiresAt <= Date.now())
+        if (
+          s.selection.expiresAt <= Date.now() ||
+          s.selection.contextHash !== this.#selectionContextHash(t)
+        )
           fail("INPUT_SELECTION_STALE", "Selection is absent or expired.");
         const chosen = this.#chatSelection(s.selection, message);
         if (chosen.kind === "matched")
@@ -284,6 +288,7 @@ export class AgentRuntime {
         );
       const pending =
         s.state === "GATHERING_INPUT" ? s.stack[s.stack.length - 1] : undefined;
+      const activeFrame = s.stack[0];
       const waiting =
         waitingState === "AWAITING_SELECTION" ||
         waitingState === "AWAITING_CONFIRMATION"
@@ -304,7 +309,7 @@ export class AgentRuntime {
         ),
         this.#model,
         {
-          pendingTool: pending?.tool,
+          pendingTool: pending?.tool ?? activeFrame?.tool,
           signal: request.signal,
           secrets: t.secrets,
           onCall: () => this.#modelCall(t),
@@ -389,6 +394,7 @@ export class AgentRuntime {
                 s.selection?.navigation?.tool ??
                 s.selection?.dependency ??
                 s.stack[s.stack.length - 1]?.tool,
+              pendingFacts: s.selection?.facts ?? s.confirmation?.preview,
               signal: request.signal,
               secrets: t.secrets,
               onCall: () => this.#modelCall(t),
@@ -423,11 +429,56 @@ export class AgentRuntime {
       }
       this.#emit(t, "onToolSelected", { tool: routed.call.name });
       t.preservePendingOnError = undefined;
-      if (pending && routed.call.name === pending.tool)
-        pending.arguments = { ...pending.arguments, ...routed.call.arguments };
-      else {
+      if (
+        (pending && routed.call.name === pending.tool) ||
+        (activeFrame && routed.call.name === activeFrame.tool)
+      ) {
+        const frame =
+          pending?.tool === routed.call.name ? pending : activeFrame!;
+        const changed = Object.entries(routed.call.arguments).some(
+          ([key, value]) => digest(value) !== digest(frame.arguments[key]),
+        );
+        if (changed) {
+          for (const dependency of this.#compiled.executions.get(frame.tool)
+            .config.depends_on)
+            for (const path of Object.keys(dependency.map)) {
+              const parts = path.slice(2).split(".");
+              let object = frame.arguments;
+              for (const part of parts.slice(0, -1))
+                object = (object?.[part] ?? {}) as Record<string, unknown>;
+              delete object[parts.at(-1)!];
+            }
+          frame.dependencies = {};
+          delete frame.selectionFacts;
+          delete frame.selectionExpiresAt;
+          s.facts = {};
+        }
+        frame.arguments = { ...frame.arguments, ...routed.call.arguments };
+        if (frame !== activeFrame) {
+          const parent = s.stack[s.stack.length - 2];
+          const link = this.#compiled.executions
+            .get(parent.tool)
+            .config.depends_on.find((dep) => dep.tool === frame.tool);
+          for (const [key, source] of Object.entries(link?.arguments ?? {})) {
+            const path =
+              typeof source === "string"
+                ? source
+                : source.source === "tool-input"
+                  ? source.path
+                  : undefined;
+            if (
+              path &&
+              path !== "$" &&
+              Object.hasOwn(routed.call.arguments, key)
+            )
+              writePath(parent.arguments, path, routed.call.arguments[key]);
+          }
+        } else s.stack = [frame];
+        delete s.selection;
+        delete s.confirmation;
+      } else {
         if (pending || waiting) this.#reset(s);
-        s.stack = [this.#frame(routed.call.name, routed.call.arguments)];
+        s.stack = [this.#frame(routed.call.name, routed.call.arguments, t)];
       }
       transition(s, "RESOLVING_DEPENDENCIES");
       return this.#drive(t);
@@ -470,18 +521,77 @@ export class AgentRuntime {
   cancel(request: BaseRequest) {
     return this.#turn(request, async (t) => {
       this.#reset(t.session);
+      delete t.session.references;
       return { status: "completed", message: "Cancelled." };
     });
   }
-  #frame(tool: string, args: Record<string, unknown>): Frame {
+  #frame(tool: string, args: Record<string, unknown>, t: Turn): Frame {
     const execution = this.#compiled.executions.get(tool),
       input = structuredClone(args);
+    let selectionFacts: Record<string, unknown> | undefined;
+    let selectionExpiresAt: number | undefined;
+    if (execution.config.references?.consume) {
+      for (const [inputName, refName] of Object.entries(
+        execution.config.references.consume,
+      )) {
+        const ref = t.session.references?.[refName];
+        if (
+          input[inputName] === undefined &&
+          ref &&
+          ref.expiresAt > Date.now() &&
+          ref.contextHash === this.#selectionContextHash(t)
+        ) {
+          input[inputName] = structuredClone(ref.value);
+          selectionFacts = { ...selectionFacts, ...ref.facts };
+          selectionExpiresAt = Math.min(
+            selectionExpiresAt ?? Infinity,
+            ref.expiresAt,
+          );
+        }
+      }
+    }
     if (!execution.validatePartial(input))
       fail(
         "INPUT_SCHEMA_VIOLATION",
         "Tool arguments violate the input schema.",
       );
-    return { tool, arguments: input, dependencies: {} };
+    return {
+      tool,
+      arguments: input,
+      dependencies: {},
+      selectionFacts,
+      selectionExpiresAt,
+    };
+  }
+  #displayData(t: Turn, value: unknown): unknown {
+    const privateFields = new Set(
+      this.#compiled.policies.tools.flatMap(
+        (tool) => tool.response.private_fields,
+      ),
+    );
+    const secrets = [...t.secrets];
+    const collect = (item: unknown): void => {
+      if (!item || typeof item !== "object") return;
+      for (const [key, child] of Object.entries(item)) {
+        if (privateFields.has(key) && typeof child === "string" && child)
+          secrets.push(child);
+        else collect(child);
+      }
+    };
+    collect(value);
+    collect(t.session.selection?.items);
+    collect(t.session.stack);
+    const strip = (item: unknown): unknown => {
+      if (Array.isArray(item)) return item.map(strip);
+      if (item && typeof item === "object")
+        return Object.fromEntries(
+          Object.entries(item)
+            .filter(([key]) => !privateFields.has(key))
+            .map(([key, child]) => [key, strip(child)]),
+        );
+      return item;
+    };
+    return redact(strip(value), secrets);
   }
   #reset(s: SessionStateV2) {
     transition(s, "IDLE");
@@ -691,8 +801,26 @@ export class AgentRuntime {
               ...e.details,
               executionMayHaveOccurred: true,
             });
-          if (t.preservePendingOnError) transition(s, t.preservePendingOnError);
-          else {
+          if (
+            (e.code === "CONFIRMATION_STALE" &&
+              s.confirmation &&
+              s.confirmation.expiresAt > Date.now() &&
+              s.confirmation.hash ===
+                this.#confirmationHash(
+                  t,
+                  s.confirmation.prepared,
+                  s.confirmation.preview,
+                )) ||
+            (e.code === "INPUT_SELECTION_STALE" &&
+              s.selection &&
+              s.selection.expiresAt > Date.now() &&
+              s.selection.contextHash === this.#selectionContextHash(t))
+          ) {
+            // A stale token must not cancel a newer valid operation.
+          } else if (t.preservePendingOnError) {
+            if (s.state !== t.preservePendingOnError)
+              transition(s, t.preservePendingOnError);
+          } else {
             transition(s, "FAILED");
             s.stack = [];
             delete s.selection;
@@ -811,7 +939,7 @@ export class AgentRuntime {
           tool: frame.tool,
           dependency: dep.tool,
         });
-        s.stack.push(this.#frame(dep.tool, args));
+        s.stack.push(this.#frame(dep.tool, args, t));
         pushed = true;
         break;
       }
@@ -853,6 +981,7 @@ export class AgentRuntime {
                 value.data,
               ]),
             ),
+            selection: frame.selectionFacts,
           },
         );
         const preview = redact(
@@ -877,6 +1006,7 @@ export class AgentRuntime {
           preview,
           expiresAt: Math.min(
             Date.now() + tool.behavior.confirmation.ttl_ms,
+            frame.selectionExpiresAt ?? Infinity,
             ...Object.values(frame.dependencies).map((d) => d.expiresAt),
           ),
         };
@@ -891,11 +1021,22 @@ export class AgentRuntime {
   #confirmationResult(t: Turn): Outcome {
     const c = t.session.confirmation,
       f = t.session.stack[t.session.stack.length - 1];
-    if (!c || !f) fail("CONFIRMATION_STALE", "No pending confirmation.");
+    if (
+      !c ||
+      !f ||
+      c.expiresAt <= Date.now() ||
+      c.hash !== this.#confirmationHash(t, c.prepared, c.preview)
+    )
+      fail(
+        "CONFIRMATION_STALE",
+        "Confirmation is absent, expired, or changed.",
+      );
     return {
       status: "needs_confirmation",
       tool: { id: f.tool },
-      message: "Review and confirm this action using its confirmation ID.",
+      message: /\p{Script=Arabic}/u.test(t.session.lastUserMessage ?? "")
+        ? "راجعي تفاصيل الطلب ثم استخدمي زر التأكيد لتنفيذه."
+        : "Review and confirm this action using its confirmation ID.",
       confirmation: {
         id: c.token,
         expiresAt: c.expiresAt,
@@ -904,12 +1045,36 @@ export class AgentRuntime {
     };
   }
   #selectionResult(s: SelectionState, introduction?: string): Outcome {
+    if (s.expiresAt <= Date.now())
+      fail(
+        "INPUT_SELECTION_STALE",
+        "Selection expired during the response. Request fresh options.",
+      );
+    if (s.language === "ar") {
+      if (
+        introduction ===
+        "The requested option is unavailable. Choose one of these alternatives."
+      )
+        introduction = "الخيار المطلوب غير متاح. اختاري أحد البدائل التالية.";
+      if (
+        introduction ===
+        "More than one option has that name. Choose its displayed number."
+      )
+        introduction =
+          "يوجد أكثر من خيار بهذا الاسم. اختاري الرقم الظاهر بجانبه.";
+    }
     const list = s.options
       .map((option, index) => `${index + 1}. ${option.label}`)
       .join("\n");
     return {
       status: "needs_selection",
-      message: [introduction ?? "Select an option.", list]
+      message: [
+        introduction ??
+          (s.language === "ar"
+            ? "اختاري أحد الخيارات التالية:"
+            : "Select an option."),
+        list,
+      ]
         .filter(Boolean)
         .join("\n"),
       selection: {
@@ -972,6 +1137,8 @@ export class AgentRuntime {
     return { explicit: true, indices };
   }
   #subsetSelection(selection: SelectionState, indices: number[]) {
+    if (selection.facts)
+      selection.facts = indices.map((index) => selection.facts![index]);
     selection.items = indices.map((index) => selection.items[index]);
     selection.options = indices.map((index) => selection.options[index]);
     return selection;
@@ -982,6 +1149,7 @@ export class AgentRuntime {
     config: NonNullable<ToolConfig["selection"]>,
     expiresAt: number,
     allowEmpty = false,
+    publication?: SelectionState["publication"],
   ): SelectionState {
     const items = readPath(data, config.items_path);
     if (
@@ -1008,17 +1176,37 @@ export class AgentRuntime {
           "Selection item does not match configured ID/label paths.",
           { id_path: config.id_path, label_path: config.label_path },
         );
-      return { id: String(id), label };
+      return { id: config.id_sensitive ? randomUUID() : String(id), label };
     });
     if (new Set(options.map((o) => o.id)).size !== options.length)
       fail("DEPENDENCY_SELECTION_INVALID", "Selection IDs must be unique.");
-    return {
+    const selection: SelectionState = {
       token: randomUUID(),
       items,
       options,
       expiresAt,
       contextHash: this.#selectionContextHash(t),
+      language:
+        this.#compiled.policies.assistant.language === "ar" ||
+        (this.#compiled.policies.assistant.language === "auto" &&
+          /\p{Script=Arabic}/u.test(t.session.lastUserMessage ?? ""))
+          ? "ar"
+          : "en",
+      facts: items.map(
+        (item) =>
+          this.#displayData(
+            t,
+            Object.fromEntries(
+              Object.entries(config.facts ?? {}).flatMap(([key, path]) => {
+                const value = readPath(item, path);
+                return value === undefined ? [] : [[key, value]];
+              }),
+            ),
+          ) as Record<string, unknown>,
+      ),
     };
+    selection.publication = publication;
+    return selection;
   }
   #selectionContextHash(t: Turn) {
     return digest({
@@ -1044,6 +1232,22 @@ export class AgentRuntime {
     data: unknown,
     expiresAt: number,
   ) {
+    if (dep.select) {
+      const facts = Object.fromEntries(
+        Object.entries(dep.select.facts ?? {}).flatMap(([key, path]) => {
+          const value = readPath(data, path);
+          return value === undefined ? [] : [[key, value]];
+        }),
+      );
+      parent.selectionFacts = {
+        ...parent.selectionFacts,
+        ...(this.#displayData(t, facts) as Record<string, unknown>),
+      };
+      parent.selectionExpiresAt = Math.min(
+        parent.selectionExpiresAt ?? Infinity,
+        expiresAt,
+      );
+    }
     const hash = this.#dependencyHash(t, parent, dep);
     for (const [target, source] of Object.entries(dep.map)) {
       const value = readPath(data, source);
@@ -1078,6 +1282,24 @@ export class AgentRuntime {
       dependency: dep.tool,
     });
   }
+  #publishSelection(t: Turn, selection: SelectionState, item: unknown) {
+    const publication = selection.publication;
+    if (!publication) return;
+    const value = readPath(item, publication.path);
+    if (value === undefined)
+      fail(
+        "DEPENDENCY_UNRESOLVED",
+        "Selected item is missing its configured reference.",
+      );
+    t.session.references ??= {};
+    t.session.references[publication.name] = {
+      value: structuredClone(value),
+      expiresAt: Math.min(selection.expiresAt, Date.now() + publication.ttl_ms),
+      sourceToolId: publication.sourceToolId,
+      contextHash: selection.contextHash,
+      facts: selection.facts?.[selection.items.indexOf(item)],
+    };
+  }
   async #select(t: Turn, token: string, choice: string): Promise<Outcome> {
     const s = t.session,
       selection = s.selection;
@@ -1093,6 +1315,7 @@ export class AgentRuntime {
     if (index < 0)
       fail("INPUT_SELECTION_INVALID", "Choose an ID from the current options.");
     const selected = selection.items[index];
+    this.#publishSelection(t, selection, selected);
     delete s.selection;
     transition(s, "RESOLVING_DEPENDENCIES");
     if (selection.dependency) {
@@ -1103,6 +1326,14 @@ export class AgentRuntime {
       if (!dep)
         fail("DEPENDENCY_UNRESOLVED", "Selection dependency is unavailable.");
       this.#applyDependency(t, parent, dep, selected, selection.expiresAt);
+      parent.selectionFacts = {
+        ...parent.selectionFacts,
+        ...selection.facts?.[index],
+      };
+      parent.selectionExpiresAt = Math.min(
+        parent.selectionExpiresAt ?? Infinity,
+        selection.expiresAt,
+      );
     } else if (selection.navigation) {
       const args = mapValues(selection.navigation.arguments ?? {}, {
         input: selection.navigation.sourceArguments ?? {},
@@ -1115,7 +1346,12 @@ export class AgentRuntime {
           fail("DEPENDENCY_UNRESOLVED", "Navigation mapping is missing.");
         writePath(args, target, value);
       }
-      s.stack = [this.#frame(selection.navigation.tool, args)];
+      s.stack = [this.#frame(selection.navigation.tool, args, t)];
+      s.stack[0].selectionFacts = {
+        ...s.stack[0].selectionFacts,
+        ...selection.facts?.[index],
+      };
+      s.stack[0].selectionExpiresAt = selection.expiresAt;
     } else fail("INPUT_SELECTION_INVALID", "No pending navigation.");
     return this.#drive(t);
   }
@@ -1133,21 +1369,59 @@ export class AgentRuntime {
       mappedQuery: Object.keys(tool.request.map.query),
       dependencyCount: tool.depends_on.length,
     };
-    const data = await this.#http.execute(tool, prepared, {
-      token: t.token,
-      signal: t.request.signal,
-      beforeAttempt: async () => {
-        await this.#limit(t, "tool_calls");
-        t.metrics.toolCalls++;
-      },
-      onRetry: (attempt) => {
-        t.metrics.retryCount++;
-        this.#emit(t, "onRetry", { tool: frame.tool, attempt });
-      },
-      onLatency: (ms) => {
-        t.metrics.httpMs += ms;
-      },
-    });
+    let data: unknown;
+    try {
+      data = await this.#http.execute(tool, prepared, {
+        token: t.token,
+        signal: t.request.signal,
+        beforeAttempt: async () => {
+          await this.#limit(t, "tool_calls");
+          t.metrics.toolCalls++;
+        },
+        onRetry: (attempt) => {
+          t.metrics.retryCount++;
+          this.#emit(t, "onRetry", { tool: frame.tool, attempt });
+        },
+        onLatency: (ms) => {
+          t.metrics.httpMs += ms;
+        },
+      });
+    } catch (error) {
+      const recovery = tool.behavior.recovery;
+      if (
+        !(error instanceof AgentRuntimeError) ||
+        !recovery ||
+        !recovery.statuses.includes(error.details.status as 409 | 410)
+      )
+        throw error;
+      const dep = tool.depends_on.find(
+        (entry) => entry.tool === recovery.refresh_dependency,
+      )!;
+      for (const path of Object.keys(dep.map)) {
+        const parts = path.slice(2).split(".");
+        let object = frame.arguments;
+        for (const part of parts.slice(0, -1))
+          object = (object?.[part] ?? {}) as Record<string, unknown>;
+        delete object[parts.at(-1)!];
+      }
+      delete frame.dependencies[dep.tool];
+      delete frame.selectionFacts;
+      delete frame.selectionExpiresAt;
+      s.facts = {};
+      delete s.confirmation;
+      delete s.selection;
+      transition(s, "RESOLVING_DEPENDENCIES");
+      const refreshed = await this.#drive(t);
+      return {
+        ...refreshed,
+        message: [
+          "The previous option is no longer available. Review the refreshed result before confirming.",
+          refreshed.message,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      };
+    }
     if (execution.validateOutput && !execution.validateOutput(data))
       fail(
         "TOOL_OUTPUT_SCHEMA_VIOLATION",
@@ -1163,6 +1437,10 @@ export class AgentRuntime {
           .get(parent.tool)
           .config.depends_on.find((d) => d.tool === frame.tool);
       if (!dep) fail("DEPENDENCY_UNRESOLVED", "Missing dependency link.");
+      parent.selectionFacts = {
+        ...parent.selectionFacts,
+        ...frame.selectionFacts,
+      };
       transition(s, "RESOLVING_DEPENDENCIES");
       const dependencyExpiry = Math.min(
         Date.now() + dep.ttl_ms,
@@ -1175,7 +1453,14 @@ export class AgentRuntime {
           dep.select,
           dependencyExpiry,
           true,
+          tool.references?.publish
+            ? { ...tool.references.publish, sourceToolId: tool.id }
+            : undefined,
         );
+        selection.facts = selection.facts?.map((facts) => ({
+          ...frame.selectionFacts,
+          ...facts,
+        }));
         if (!selection.items.length) {
           transition(s, "GATHERING_INPUT");
           return {
@@ -1192,6 +1477,11 @@ export class AgentRuntime {
           parent.arguments,
         );
         if (match.explicit && match.indices.length === 1) {
+          this.#publishSelection(
+            t,
+            selection,
+            selection.items[match.indices[0]],
+          );
           this.#applyDependency(
             t,
             parent,
@@ -1200,6 +1490,7 @@ export class AgentRuntime {
             selection.expiresAt,
           );
         } else if (!match.explicit && selection.items.length === 1) {
+          this.#publishSelection(t, selection, selection.items[0]);
           this.#applyDependency(
             t,
             parent,
@@ -1227,13 +1518,13 @@ export class AgentRuntime {
     const result: Outcome = {
       status: "completed",
       tool: { id: frame.tool },
-      data: safe,
+      data: this.#displayData(t, safe),
     };
     const presentation = t.request.presentation ?? this.#defaultPresentation;
     if (presentation !== "raw") {
       const view = tool.response.model_view;
       let projected = readPath(
-        safe,
+        this.#displayData(t, safe),
         view.path === "$" ? (tool.response.items_path ?? "$") : view.path,
       );
       const projectItem = (item: unknown) =>
@@ -1247,6 +1538,11 @@ export class AgentRuntime {
       projected = Array.isArray(projected)
         ? projected.slice(0, view.max_items).map(projectItem)
         : projectItem(projected);
+      const hasChoices = Boolean(tool.selection && tool.navigates_to);
+      if (hasChoices) {
+        const items = readPath(safe, tool.selection!.items_path);
+        projected = { optionCount: Array.isArray(items) ? items.length : 0 };
+      }
       const text = JSON.stringify(projected) ?? "null";
       const compact =
         text.length > view.max_chars
@@ -1260,7 +1556,9 @@ export class AgentRuntime {
           system: redact(
             assistantSystemPrompt(this.#compiled, {
               kind: "tool_result",
-              toolInstructions: tool.response.instructions,
+              toolInstructions: hasChoices
+                ? "The host renders all choices in a deterministic list. Write one short introductory question only. Never name, enumerate, describe, price, or number options. You only know the count, not their contents. If count is zero, explain no results were found."
+                : tool.response.instructions,
             }),
             t.secrets,
           ),
@@ -1298,6 +1596,13 @@ export class AgentRuntime {
         });
         this.#usage(t, response.usage);
         result.message = redact(response.text, t.secrets);
+        if (
+          hasChoices &&
+          /(?:^|\n)\s*(?:\d+[.)]|[-*•])\s/m.test(result.message)
+        )
+          result.message = /\p{Script=Arabic}/u.test(s.lastUserMessage ?? "")
+            ? "اختاري من الخيارات التالية:"
+            : "Choose from the following options:";
         if (presentation === "ai") delete result.data;
       } catch {
         const fallback = JSON.stringify(compact, null, 2);
@@ -1313,9 +1618,16 @@ export class AgentRuntime {
         t,
         safe,
         tool.selection,
-        Date.now() + 60000,
+        Math.min(Date.now() + 60000, frame.selectionExpiresAt ?? Infinity),
         true,
+        tool.references?.publish
+          ? { ...tool.references.publish, sourceToolId: tool.id }
+          : undefined,
       );
+      selection.facts = selection.facts?.map((facts) => ({
+        ...frame.selectionFacts,
+        ...facts,
+      }));
       if (selection.items.length === 0) {
         transition(s, "COMPLETED");
         return result;

@@ -5,7 +5,8 @@ version: "2"
 assistant:
   name: Rozy
   language: auto
-  timezone: Asia/Riyadh
+  # Set the owner's verified IANA timezone through AGENTO_TIMEZONE.
+  timezone: UTC
   system_prompt: |
     أنتِ روزي، مساعدة استقبال لصالون نسائي.
     تحدثي مع العميلة بود واحترام وبصيغة المؤنث، بجمل واضحة ومختصرة.
@@ -15,6 +16,9 @@ assistant:
     اسألي عن معلومة واحدة لازمة في كل مرة قدر الإمكان.
     لا تدفعي كل محادثة مباشرة إلى الحجز؛ قد تريد العميلة الاستفسار فقط.
     لا تختلقي خدمة أو سعرًا أو عرضًا أو مدة أو نتيجة علاج أو موعدًا متاحًا.
+    احتفظي بأسماء الخيارات كما أعادها API ولا تستبدليها بأسماء مثل خيار 1.
+    لا تضيفي عملة للسعر إذا لم تتوفر في البيانات أو الإعداد الموثوق الخاص بالنتيجة.
+    الحجز هنا لخدمة واحدة؛ عند طلب عدة خدمات اشرحي هذا القيد ولا تنفذي جزءًا من الطلب.
     لا تخلطي توفر الخدمة في الكتالوج مع توفر موعد لتنفيذها.
     لا تطلبي IDs أو tokens أو كلمات مرور من العميلة داخل المحادثة.
     لا تقولي إن الحجز تم قبل نجاح الأداة، واعرضي الحالة الفعلية للنتيجة.
@@ -202,10 +206,17 @@ tools:
       items_path: $.services
       id_path: $.id
       label_path: $.name_ar
+      facts:
+        service: $.name_ar
     navigates_to:
       tool: get-service-details
       map:
         $.service_id: $.id
+    references:
+      publish:
+        name: selected_service_id
+        path: $.id
+        ttl_ms: 600000
   - id: get-categories
     tool:
       title: Browse Categories
@@ -258,6 +269,10 @@ tools:
       tool: get-groups
       map:
         $.slug: $.slug
+    references:
+      publish:
+        name: selected_category_slug
+        path: $.slug
   - id: get-groups
     tool:
       title: Browse Service Groups
@@ -318,6 +333,21 @@ tools:
       tool: get-services
       map:
         $.group_id: $.id
+    references:
+      publish:
+        name: selected_group_id
+        path: $.id
+      consume:
+        slug: selected_category_slug
+    depends_on:
+      - tool: get-categories
+        when: missing
+        select:
+          items_path: $
+          id_path: $.id
+          label_path: $.name_ar
+        map:
+          $.slug: $.slug
   - id: get-services
     tool:
       title: Get Services in Group
@@ -351,6 +381,7 @@ tools:
       - what services in
       - services for
       - list of services
+      - شو الخدمات بهاي المجموعة
     request:
       method: GET
       url: http://localhost:3000/api/catalog/groups/{group_id}/services
@@ -377,10 +408,26 @@ tools:
       items_path: $.services
       id_path: $.id
       label_path: $.name_ar
+      facts:
+        service: $.name_ar
     navigates_to:
       tool: get-service-details
       map:
         $.service_id: $.id
+    references:
+      publish:
+        name: selected_service_id
+        path: $.id
+        ttl_ms: 600000
+    depends_on:
+      - tool: get-groups
+        when: missing
+        select:
+          items_path: $.groups
+          id_path: $.id
+          label_path: $.name_ar
+        map:
+          $.group_id: $.id
   - id: get-service-details
     tool:
       title: Service Details
@@ -405,6 +452,9 @@ tools:
       - more info
       - details of
       - describe
+      - كم سعرها
+      - كم مدتها
+      - احكيلي عنها
     request:
       method: GET
       url: http://localhost:3000/api/catalog/services/{service_id}
@@ -418,6 +468,33 @@ tools:
       instructions:
         You are Rozy, a salon assistant. Reply in the user language when available. Use only
         API facts. Present full service details including variants, prices, duration, and images.
+        Preserve the exact ServiceVariants name_ar values. Base prices are not variant prices.
+        If currency is absent, do not add a currency label.
+      model_view:
+        path: $.service
+        include:
+          [
+            id,
+            name_ar,
+            description,
+            base_price,
+            base_duration_minutes,
+            ServiceVariants,
+          ]
+    references:
+      consume:
+        service_id: selected_service_id
+    depends_on:
+      - tool: get-services
+        when: missing
+        select:
+          items_path: $.services
+          id_path: $.id
+          label_path: $.name_ar
+          facts:
+            service: $.name_ar
+        map:
+          $.service_id: $.id
   - id: get-service-employees
     tool:
       title: Service Employees
@@ -439,6 +516,8 @@ tools:
       - which stylist
       - available staff
       - specialist
+      - مين بتعملها
+      - مين المختصات
     request:
       method: GET
       url: http://localhost:3000/api/catalog/services/{service_id}/employees
@@ -452,6 +531,21 @@ tools:
       instructions:
         You are Rozy, a salon assistant. Reply in the user language when available. Use only
         API facts. Present available employees/stylists for this service.
+      model_view:
+        path: $.employees
+        include: [id, name, role, is_active]
+    references:
+      consume:
+        service_id: selected_service_id
+    depends_on:
+      - tool: get-services
+        when: missing
+        select:
+          items_path: $.services
+          id_path: $.id
+          label_path: $.name_ar
+        map:
+          $.service_id: $.id
   - id: get-availability
     tool:
       title: Check Availability
@@ -524,10 +618,29 @@ tools:
       instructions:
         You are Rozy, a salon assistant. Reply in the user language when available. Use only
         API facts. Show available time slots in a clear format.
+      private_fields: [slot_token]
+      output_schema:
+        type: object
+        required: [slots]
+        properties:
+          slots:
+            type: array
+            items:
+              type: object
+              required: [slot_token, start_at, start_time]
+              properties:
+                slot_token: { type: string, minLength: 1 }
+                start_at: { type: string, format: date-time }
+                start_time:
+                  { type: string, pattern: '^(?:[01]\d|2[0-3]):[0-5]\d$' }
     selection: &a1
       items_path: $.slots
       id_path: $.slot_token
+      id_sensitive: true
       label_path: $.start_at
+      facts:
+        appointment_time: $.start_at
+        local_time: $.start_time
       match:
         input_path: $.preferred_time
         item_path: $.start_time
@@ -544,6 +657,16 @@ tools:
         $.slot_token: $.slot_token
         $.start_at: $.start_at
     depends_on:
+      - tool: get-services
+        when: missing
+        select:
+          items_path: $.services
+          id_path: $.id
+          label_path: $.name_ar
+          facts:
+            service: $.name_ar
+        map:
+          $.service_id: $.id
       - tool: get-service-variants
         when: missing
         arguments:
@@ -552,9 +675,16 @@ tools:
           items_path: $
           id_path: $.id
           label_path: $.name_ar
+          facts:
+            variant: $.name_ar
+            price: $.price
+            duration: $.duration_minutes
         map:
           $.variant_id: $.id
         ttl_ms: 120000
+    references:
+      consume:
+        service_id: selected_service_id
   - id: book-appointment
     tool:
       title: Book Appointment
@@ -636,12 +766,25 @@ tools:
         details.
     behavior:
       effect: side-effect
+      recovery:
+        refresh_dependency: get-availability
       confirmation:
         required: true
         ttl_ms: 120000
         preview:
+          service:
+            source: selection
+            path: $.service
+          variant:
+            source: selection
+            path: $.variant
+          price:
+            source: selection
+            path: $.price
           date: $.date
-          appointment_time: $.start_at
+          appointment_time:
+            source: selection
+            path: $.local_time
           notes: $.notes
     depends_on:
       - tool: get-availability
@@ -682,6 +825,8 @@ tools:
       - my schedule
       - upcoming
       - my reservations
+      - متى موعدي
+      - ورجيني حجوزاتي
     request:
       method: GET
       url: http://localhost:3000/api/appointments
@@ -763,13 +908,32 @@ tools:
       instructions:
         You are Rozy, a salon assistant. Reply in the user language when available. Use only
         API facts. Present service variants with names, prices, and duration.
+      model_view:
+        include: [id, service_id, name_ar, price, duration_minutes]
+      output_schema:
+        type: array
+        items:
+          type: object
+          required: [id, service_id, name_ar, price, duration_minutes]
+          properties:
+            id: { type: integer, minimum: 1 }
+            service_id: { type: integer, minimum: 1 }
+            name_ar: { type: string }
+            price: { type: string }
+            duration_minutes: { type: integer, minimum: 1 }
     selection:
       items_path: $
       id_path: $.id
       label_path: $.name_ar
-    navigates_to:
-      tool: get-availability
-      arguments:
-        service_id: $.service_id
-      map:
-        $.variant_id: $.id
+    references:
+      consume:
+        service_id: selected_service_id
+    depends_on:
+      - tool: get-services
+        when: missing
+        select:
+          items_path: $.services
+          id_path: $.id
+          label_path: $.name_ar
+        map:
+          $.service_id: $.id
