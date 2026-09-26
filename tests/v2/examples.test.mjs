@@ -44,7 +44,7 @@ test("URL override cannot inject YAML or change provider origin; HTTP auth requi
     },
     { direct: true },
   );
-  assert.equal(compileConfig(config).tools.size, 11);
+  assert.equal(compileConfig(config).tools.size, 10);
   assert.equal(
     config.tools.find((t) => t.id === "get-service-employees").request.url,
     "http://localhost:3011/api/catalog/services/{service_id}/employees",
@@ -56,7 +56,7 @@ test("URL override cannot inject YAML or change provider origin; HTTP auth requi
     /without credentials/,
   );
 });
-test("all eleven existing salon endpoints are migrated and booking constants remain host-owned", async () => {
+test("current salon tools compile with the scheduling flow and keep private slot data host-controlled", async () => {
   const config = await loadExampleConfig(
     new URL(paths[0], root),
     { AGENTO_API_BASE_URL: "https://real-api.test" },
@@ -75,53 +75,39 @@ test("all eleven existing salon endpoints are migrated and booking constants rem
       "get-services",
       "get-service-details",
       "get-service-employees",
-      "get-availability",
-      "book-appointment",
+      "resolve-service-for-scheduling",
+      "load-schedule-slots",
+      "commit-selected-slot",
       "get-my-appointments",
-      "get-featured-services",
-      "get-service-variants",
     ].sort(),
   );
-  const tool = c.tools.get("book-appointment");
-  for (const key of [
-    "slot_token",
-    "payment_provider",
-    "currency",
-    "hold_minutes",
-  ])
-    assert.equal(key in tool.inputSchema.properties, false);
-  assert.deepEqual(c.executions.get("search-services").config.selection, {
-    items_path: "$.services",
-    id_path: "$.id",
-    label_path: "$.name_ar",
-    facts: { service: "$.name_ar" },
-  });
-  assert.deepEqual(c.executions.get("get-groups").config.selection, {
-    items_path: "$.groups",
-    id_path: "$.id",
-    label_path: "$.name_ar",
-  });
-  assert.deepEqual(c.executions.get("get-services").config.selection, {
-    items_path: "$.services",
-    id_path: "$.id",
-    label_path: "$.name_ar",
-    facts: { service: "$.name_ar" },
-  });
-  const availability = c.executions.get("get-availability").config;
+  const schedulingEntry = c.executions.get(
+    "resolve-service-for-scheduling",
+  ).config;
+  assert.equal(schedulingEntry.navigates_to?.tool, "load-schedule-slots");
+
+  const availability = c.executions.get("load-schedule-slots").config;
   assert.deepEqual(availability.selection, {
     items_path: "$.slots",
     id_path: "$.slot_token",
-    label_path: "$.start_at",
+    label_path: "$.start_time",
     id_sensitive: true,
     facts: { appointment_time: "$.start_at", local_time: "$.start_time" },
-    match: {
-      input_path: "$.preferred_time",
-      item_path: "$.start_time",
-    },
   });
   assert.equal(availability.request.map.query.variant_ids, "$.variant_id");
-  assert.equal(availability.request.map.query.employee_ids, "$.employee_id");
-  assert.equal(availability.request.map.query.variant_id, undefined);
+  assert.equal(availability.navigates_to?.tool, "commit-selected-slot");
+
+  const commit = c.executions.get("commit-selected-slot").config;
+  assert.equal(commit.behavior.effect, "side-effect");
+  assert.equal(commit.behavior.confirmation.required, true);
+  assert.deepEqual(commit.request.map.body, {
+    slot_token: "$.slot_token",
+    notes: "$.notes",
+  });
+  assert.equal(
+    "slot_token" in c.tools.get("commit-selected-slot").inputSchema.properties,
+    false,
+  );
 });
 test("salon Arabic requests have lexical candidates before semantic recall", async () => {
   const config = await loadExampleConfig(
@@ -157,25 +143,32 @@ test("salon navigation preserves selected IDs, obtains slot data from the API an
       data = { groups: [{ id: 7, name_ar: "Coloring" }] };
     else if (url.pathname.endsWith("/groups/7/services"))
       data = { ok: true, services: [{ id: 9, name_ar: "Hair color" }] };
+    else if (url.pathname.endsWith("/services/search"))
+      data = { services: [{ id: 9, name_ar: "Hair color" }] };
     else if (url.pathname.endsWith("/services/9"))
-      data = { ok: true, service: { id: 9, name_ar: "Hair color" } };
-    else if (url.pathname.endsWith("/service-variants"))
-      data = [
-        {
-          id: 12,
-          service_id: 9,
-          name_ar: "Full color",
-          price: "20.00",
-          duration_minutes: 25,
+      data = {
+        ok: true,
+        service: {
+          id: 9,
+          name_ar: "Hair color",
+          ServiceVariants: [
+            {
+              id: 12,
+              service_id: 9,
+              name_ar: "Full color",
+              price: "20.00",
+              duration_minutes: 25,
+            },
+            {
+              id: 13,
+              service_id: 9,
+              name_ar: "Roots",
+              price: "21.00",
+              duration_minutes: 20,
+            },
+          ],
         },
-        {
-          id: 13,
-          service_id: 9,
-          name_ar: "Roots",
-          price: "21.00",
-          duration_minutes: 2,
-        },
-      ];
+      };
     else if (url.pathname.endsWith("/availability"))
       data = {
         slots: [
@@ -237,42 +230,66 @@ test("salon navigation preserves selected IDs, obtains slot data from the API an
       "/api/catalog/services/9",
     ],
   );
+  calls.length = 0;
   r = await runtime.invoke({
     sessionId: "booking",
-    tool: "book-appointment",
+    tool: "resolve-service-for-scheduling",
     arguments: {
+      q: "Hair color",
       date: "2026-10-01",
-      service_id: 9,
-      preferred_time: "11:00",
       notes: "quiet",
     },
     auth: { token: "user:opaque" },
   });
+
+  // The service name matches exactly, so scheduling advances to variant choice.
   assert.equal(r.status, "needs_selection");
+  assert.equal(r.selection.options.some((option) => option.id === "13"), true);
+
   r = await runtime.select({
     sessionId: "booking",
     selectionId: r.selection.id,
     choice: "13",
   });
+
+  // Slot IDs are sensitive, so select by the public opaque option ID.
+  assert.equal(r.status, "needs_selection");
+  const eleven = r.selection.options.find((option) => option.label === "11:00");
+  assert.ok(eleven);
+  assert.notEqual(eleven.id, "slot-from-api-2");
+
+  r = await runtime.select({
+    sessionId: "booking",
+    selectionId: r.selection.id,
+    choice: eleven.id,
+  });
+
   assert.equal(r.status, "needs_confirmation");
   const confirmationId = r.confirmation.id;
   assert.equal(
     calls.filter((c) => c.path.endsWith("/from-availability")).length,
     0,
   );
+
   r = await runtime.confirm({ sessionId: "booking", confirmationId });
   assert.equal(r.status, "completed");
   assert.deepEqual(calls.at(-1).body, {
     slot_token: "slot-from-api-2",
-    payment_provider: "none",
-    currency: "SAR",
-    hold_minutes: 15,
     notes: "quiet",
   });
   assert.equal(calls.at(-1).auth, "Bearer user:opaque");
   assert.equal(
     calls.find((c) => c.path.endsWith("/availability")).query.variant_ids,
     "13",
+  );
+  assert.deepEqual(
+    calls.map((c) => c.path),
+    [
+      "/api/catalog/services/search",
+      "/api/catalog/services/9",
+      "/api/availability",
+      "/api/bookings/from-availability",
+    ],
   );
   assert.equal(
     (await runtime.confirm({ sessionId: "booking", confirmationId })).error
