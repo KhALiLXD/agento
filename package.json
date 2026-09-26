@@ -1,34 +1,15 @@
 {
-  "name": "@lousin/agento",
-  "version": "2.0.0-alpha.2",
+  "name": "agento-runtime",
+  "version": "1.0.0-alpha.1",
   "description": "AGENTO: a schema-driven AI agent runtime for existing REST APIs",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist",
-    "src",
-    "docs",
-    "scripts/clean-dist.mjs",
-    "tsconfig.json",
-    "evals/v2",
-    "examples/console.mjs",
-    "examples/*/*.mjs",
-    "examples/*/*.mts",
-    "examples/*/*.ts",
-    "examples/*/*.yml",
-    "examples/*/README.md",
-    "examples/*/package.json",
-    "examples/*/package-lock.json",
-    "examples/*/tsconfig.json",
-    "examples/*/.env.example"
+    "dist"
   ],
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./v2": {
       "types": "./dist/v2/index.d.ts",
       "import": "./dist/v2/index.js"
     }

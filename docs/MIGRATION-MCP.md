@@ -5,7 +5,7 @@
 The V2 package has one public runtime: `AgentRuntime`. The old `AgentHandler` runtime and its verifier-based authentication path are not shipped. A legacy YAML file can be converted into a review-required V2 draft, but it is never executed as V1.
 
 ```ts
-import { migrateLegacyConfig, compileConfig } from "@lousin/agento/v2";
+import { migrateLegacyConfig, compileConfig } from "agento-runtime";
 const draft = migrateLegacyConfig(oldYaml);
 console.log(draft.warnings);
 // Review request.auth, dependencies, selections and response presentation first.
@@ -32,7 +32,7 @@ Auth/headers, implicit selection/navigation/dependencies, providers, global poli
 ## MCP
 
 ```ts
-import { createMcpAdapter } from "@lousin/agento/v2";
+import { createMcpAdapter } from "agento-runtime";
 const handlers = createMcpAdapter(runtime, async () => ({
   sessionId: serverSessionId,
   auth: { token: verifiedCallerAccessToken },

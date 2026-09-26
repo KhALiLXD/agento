@@ -20,7 +20,7 @@ The test suite is deterministic and exercises the runtime boundaries with contro
 ## Minimal V2 usage
 
 ```ts
-import { AgentRuntime } from "@lousin/agento";
+import { AgentRuntime } from "agento-runtime";
 
 const runtime = await AgentRuntime.create({ configPath: "./agent.yml" });
 const result = await runtime.invoke({

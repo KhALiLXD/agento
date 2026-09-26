@@ -1,266 +1,103 @@
-# Real salon API at localhost:3000. Set AGENTO_API_BASE_URL to override the base URL.
-# Response paths follow the documented API envelopes. Verify item fields against sanitized
-# staging samples before using this example for live bookings.
+# AGENTO v2 — salon customer assistant
+# URLs are rewritten by examples/shared/config.mjs when AGENTO_API_BASE_URL is set.
+# AGENTO_TIMEZONE overrides assistant.timezone at runtime.
 version: "2"
+
 assistant:
   name: Rozy
   language: auto
-  # Set the owner's verified IANA timezone through AGENTO_TIMEZONE.
   timezone: UTC
   system_prompt: |
     أنتِ روزي، مساعدة استقبال لصالون نسائي.
-    تحدثي مع العميلة بود واحترام وبصيغة المؤنث، بجمل واضحة ومختصرة.
-    طابقي لغة العميلة، واستخدمي عربية طبيعية عندما تتحدث بالعربية.
-    لا تبالغي في الألقاب أو الإيموجي، ولا تكرري الترحيب في كل رد.
-    ساعدي العميلة على فهم الخدمات والمقارنة بينها واختيار ما يناسب طلبها.
-    اسألي عن معلومة واحدة لازمة في كل مرة قدر الإمكان.
-    لا تدفعي كل محادثة مباشرة إلى الحجز؛ قد تريد العميلة الاستفسار فقط.
-    لا تختلقي خدمة أو سعرًا أو عرضًا أو مدة أو نتيجة علاج أو موعدًا متاحًا.
-    احتفظي بأسماء الخيارات كما أعادها API ولا تستبدليها بأسماء مثل خيار 1.
-    لا تضيفي عملة للسعر إذا لم تتوفر في البيانات أو الإعداد الموثوق الخاص بالنتيجة.
-    الحجز هنا لخدمة واحدة؛ عند طلب عدة خدمات اشرحي هذا القيد ولا تنفذي جزءًا من الطلب.
-    لا تخلطي توفر الخدمة في الكتالوج مع توفر موعد لتنفيذها.
-    لا تطلبي IDs أو tokens أو كلمات مرور من العميلة داخل المحادثة.
-    لا تقولي إن الحجز تم قبل نجاح الأداة، واعرضي الحالة الفعلية للنتيجة.
-    قبل الحجز اعرضي ملخصًا واضحًا واطلبي التأكيد عبر الآلية المعتمدة.
+    تحدثي بود واحترام وبصيغة المؤنث، وبنفس لغة العميلة قدر الإمكان.
+    كوني مختصرة وواضحة، ولا تكرري الترحيب أو تدفعي كل محادثة نحو الحجز.
+
+    قواعد ثابتة:
+    - معلومات الخدمات والأسعار والمدد والموظفات والمواعيد تأتي من الأدوات فقط.
+    - اسم خدمة تذكره العميلة ليس إثباتًا أن الخدمة موجودة؛ يجب التحقق منه من الكتالوج.
+    - لا تختلقي IDs أو slot tokens أو أسعارًا أو مواعيد.
+    - لا تطلبي من العميلة IDs أو tokens أو بيانات داخلية.
+    - الحجز الحالي لخدمة واحدة في كل مرة.
+    - لا تقولي إن الحجز تم إلا بعد نجاح أداة الحجز.
+    - اختيار موعد لا يعني تنفيذ الحجز؛ التنفيذ يحتاج تأكيدًا صريحًا.
   conversation:
     enabled: true
     include_capability_summary: true
     use_presentation_model: true
+
 models:
   routing:
     provider: openai
-    model: gpt-4o-mini
+    model: gpt-5.6-luna
     api_key: $ENV:OPENAI_API_KEY
     temperature: 0
   presentation:
     provider: openai
-    model: gpt-4o-mini
+    model: gpt-5.6-luna
     api_key: $ENV:OPENAI_API_KEY
-    temperature: 0.2
+    temperature: 0.3
+
 routing:
-  candidate_limit: 8
+  candidate_limit: 5
   fallback_attempts: 2
+  lexical:
+    enabled: true
+    min_score: 1
+    normalize_unicode: true
+    normalize_arabic: true
+    phrase_matching: true
+  semantic_recall:
+    enabled: true
+    candidate_limit: 5
+    max_catalog_tools: 50
+    max_catalog_chars: 50000
+
 session:
   ttl_ms: 1800000
   max_history_messages: 20
   max_sessions: 10000
   max_steps: 24
+
 rate_limits:
   ai_calls: 60
   tool_calls: 120
   messages: 120
   messages_per_session: 500
   window_ms: 60000
+
 tools:
-  - id: search-services
-    tool:
-      title: Search Services
-      description: >-
-        Use this endpoint when the user wants to find services related to a specific:
+  # ---------------------------------------------------------------------------
+  # DISCOVERY FLOW
+  # Generic browsing: categories -> groups -> services -> service details.
+  # ---------------------------------------------------------------------------
 
-        - service name
-
-        - keyword
-
-        - treatment
-
-        - body area
-
-        - category-like term
-
-        - beauty need or desired result
-
-
-        This includes broad service queries such as:
-
-        - "What hair services do you have?"
-
-        - "What coloring services are available?"
-
-        - "Show me services for damaged hair."
-
-        - "Do you have anything for hair dye?"
-
-        - "What nail services do you offer?"
-
-
-        Extract the most relevant search phrase from the user's message and pass it through the "q"
-        query parameter.
-
-
-        Examples:
-
-        - "What hair services do you have?" -> q: "hair"
-
-        - "What coloring services are available?" -> q: "coloring"
-
-        - "Do you have services for hair dye?" -> q: "hair dye"
-
-        - "Show me treatments for damaged hair." -> q: "damaged hair"
-
-
-        Use get-categories only when the user explicitly wants to browse the general categories or
-        sections without searching for related services.
-      input_schema:
-        type: object
-        properties:
-          q:
-            type: string
-            description: |-
-              The service name, category-like term, treatment, body area,
-              keyword, beauty need, or desired result extracted from the user's message.
-          limit:
-            type: integer
-            description: Maximum number of matching services to return
-            minimum: 1
-            maximum: 30
-        required:
-          - q
-        additionalProperties: false
-    trigger_hints:
-      - search for a service
-      - find a service
-      - show me available services
-      - what services do you have for
-      - what hair services do you have
-      - show me hair services
-      - what coloring services are available
-      - do you have hair coloring services
-      - what services are available for hair dye
-      - show me services for damaged hair
-      - what nail services do you offer
-      - do you offer makeup services
-      - I am looking for a service
-      - I need a service for
-      - services related to
-      - do you have anything for
-      - what is available for
-      - شو خدمات الشعر عندكم
-      - عندكم صبغة
-      - بدي مناكير
-      - عندكم مناكير
-      - ابحثي عن خدمة
-    request:
-      method: GET
-      url: http://localhost:3000/api/catalog/services/search
-      timeout_ms: 8000
-      map:
-        path: {}
-        query:
-          q: $.q
-          limit: $.limit
-        body: {}
-    response:
-      instructions: >-
-        You are Rozy, a salon assistant. Reply in the user language when available. Use only API
-        facts. Present all matching services from the API response in a clear, friendly numbered
-        list.
-
-
-        For each service, include the following fields only when they are available:
-
-        - service name
-
-        - description
-
-        - price
-
-        - duration
-
-
-        When multiple matching services are returned, briefly introduce them based on the user's
-        request.
-
-
-        Example:
-
-        "Here are the available hair services:"
-
-        or:
-
-        "Here are the available coloring services:"
-
-
-        After listing the results, ask:
-
-        "Which service would you like more details about? Please tell me the name or number."
-
-
-        If no matching services are returned, say:
-
-        "I couldn't find any services matching that request. Could you try another service name or
-        keyword?"
-
-
-        IMPORTANT:
-
-        - Use ONLY services and information returned by the API.
-
-        - Never invent services, prices, durations, descriptions, or availability.
-
-        - Do not claim that a service is available unless it exists in the API response.
-
-        - Do not return categories or groups as if they were services.
-    selection:
-      items_path: $.services
-      id_path: $.id
-      label_path: $.name_ar
-      facts:
-        service: $.name_ar
-    navigates_to:
-      tool: get-service-details
-      map:
-        $.service_id: $.id
-    references:
-      publish:
-        name: selected_service_id
-        path: $.id
-        ttl_ms: 600000
   - id: get-categories
     tool:
-      title: Browse Categories
-      description:
-        Use when user wants to see available service categories (hair, nails, skin, makeup).
-        Only use this when user asks about CATEGORIES or SECTIONS, not specific services.
+      title: Browse Salon Categories
+      description: >-
+        Use only when the user wants to browse the salon generally without naming
+        a specific service or asking to schedule an appointment.
       input_schema:
         type: object
         properties: {}
-        required: []
         additionalProperties: false
     trigger_hints:
-      - what services
-      - what services do you have
-      - services do you have
-      - show me services
-      - what do you have
-      - what categories
-      - what sections
-      - show me categories
-      - browse categories
-      - list categories
-      - types of services
-      - service categories
+      - what do you offer
+      - show me your categories
+      - what service categories do you have
+      - browse services
       - شو عندكم
-      - ورجيني الأقسام
+      - شو الأقسام
+      - ورجيني أقسام الخدمات
       - بدي أشوف خدماتكم
     request:
       method: GET
       url: http://localhost:3000/api/catalog/categories
       timeout_ms: 8000
-      map:
-        path: {}
-        query: {}
-        body: {}
     response:
       instructions: >-
-        You are Rozy, a salon assistant. Reply in the user language when available. Use only API
-        facts. Present the available categories from the API response in a friendly numbered list.
-
-        After listing categories, ask: "Which category interests you? Please tell me the name or
-        number."
-
-        IMPORTANT: Use ONLY the categories from the API response. Do not make up any categories.
+        Briefly introduce the available salon categories. The host renders the
+        choices; ask the user to choose one.
     selection:
       items_path: $
       id_path: $.id
@@ -269,43 +106,22 @@ tools:
       tool: get-groups
       map:
         $.slug: $.slug
-    references:
-      publish:
-        name: selected_category_slug
-        path: $.slug
+
   - id: get-groups
     tool:
-      title: Browse Service Groups
-      description:
-        Browse groups only for a category selected from the catalog. The slug must come from
-        that trusted category selection; do not ask the customer for it.
+      title: Continue Category Browsing
+      description: >-
+        Internal continuation after the user selects a catalog category.
+        Do not select this tool directly from a new free-form user request.
       input_schema:
         type: object
         properties:
           slug:
             type: string
             minLength: 1
-            description: Category slug from a catalog selection
         required: [slug]
         additionalProperties: false
-    trigger_hints:
-      - show me services in
-      - what services in
-      - services in this category
-      - services on
-      - what do you have in
-      - what do you have on
-      - services for
-      - list of services in
-      - show me the services
-      - body care
-      - hair services
-      - nail services
-      - skin care
-      - makeup
-      - body section
-      - ورجيني مجموعات هذا القسم
-      - مجموعات قسم الشعر
+    trigger_hints: []
     request:
       method: GET
       url: http://localhost:3000/api/catalog/categories/{slug}/groups
@@ -313,18 +129,10 @@ tools:
       map:
         path:
           slug: $.slug
-        query: {}
-        body: {}
     response:
       instructions: >-
-        You are Rozy, a salon assistant. Reply in the user language when available. Use only API
-        facts. Present the service groups from the API response in a friendly numbered list.
-
-        After listing groups, ask: "Which group would you like to see services for? Please tell me
-        the name or number."
-
-        IMPORTANT: Use ONLY the groups from the API response. Do not add any services or details
-        that are not in the response.
+        Briefly introduce the groups in the selected category. The host renders
+        the choices; ask the user to choose one.
     selection:
       items_path: $.groups
       id_path: $.id
@@ -333,55 +141,34 @@ tools:
       tool: get-services
       map:
         $.group_id: $.id
-    references:
-      publish:
-        name: selected_group_id
-        path: $.id
-      consume:
-        slug: selected_category_slug
-    depends_on:
-      - tool: get-categories
-        when: missing
-        select:
-          items_path: $
-          id_path: $.id
-          label_path: $.name_ar
-        map:
-          $.slug: $.slug
+
   - id: get-services
     tool:
-      title: Get Services in Group
-      description:
-        Use when user wants to see services in a specific group. Requires group_id from a
-        previous group selection.
+      title: Continue Group Browsing
+      description: >-
+        Internal continuation after the user selects a service group.
+        Do not select this tool directly from a new free-form user request.
       input_schema:
         type: object
         properties:
+          group_id:
+            anyOf:
+              - type: integer
+                minimum: 1
+              - type: string
+                minLength: 1
           page:
             type: integer
-            description: Page number
-            default: 1
             minimum: 1
+            default: 1
           limit:
             type: integer
-            description: Items per page
-            default: 20
             minimum: 1
             maximum: 50
-          group_id:
-            description: Group ID from previous selection
-            anyOf:
-              - type: string
-              - type: integer
-        required:
-          - group_id
+            default: 20
+        required: [group_id]
         additionalProperties: false
-    trigger_hints:
-      - show me
-      - what services in
-      - services for
-      - list of services
-      - شو الخدمات بهاي المجموعة
+    trigger_hints: []
     request:
       method: GET
       url: http://localhost:3000/api/catalog/groups/{group_id}/services
@@ -392,18 +179,10 @@ tools:
         query:
           page: $.page
           limit: $.limit
-        body: {}
     response:
       instructions: >-
-        You are Rozy, a salon assistant. Reply in the user language when available. Use only API
-        facts. Present the services from the API response with names, descriptions, prices, and
-        duration in a friendly numbered list.
-
-        After listing services, ask: "Which service would you like more details about? Please tell
-        me the name or number."
-
-        IMPORTANT: Use ONLY the services from the API response. Do not invent or add any services
-        that are not in the data.
+        Briefly introduce the services in the selected group. The host renders
+        the service choices; ask the user to choose one for details.
     selection:
       items_path: $.services
       id_path: $.id
@@ -414,47 +193,123 @@ tools:
       tool: get-service-details
       map:
         $.service_id: $.id
-    references:
-      publish:
-        name: selected_service_id
-        path: $.id
-        ttl_ms: 600000
-    depends_on:
-      - tool: get-groups
-        when: missing
-        select:
-          items_path: $.groups
-          id_path: $.id
-          label_path: $.name_ar
-        map:
-          $.group_id: $.id
-  - id: get-service-details
+
+  # ---------------------------------------------------------------------------
+  # SERVICE LOOKUP / INFORMATION
+  # ---------------------------------------------------------------------------
+
+  - id: search-services
     tool:
-      title: Service Details
-      description:
-        Use when user wants detailed information about a specific service. Requires service_id
-        from a previous service selection.
+      title: Search Salon Services
+      description: >-
+        Use when the user wants to find or explore a specific service, treatment,
+        body area, beauty need, or named service, but is not asking to book or
+        check appointment times. Treat the user's words only as a search query;
+        never assume the named service exists until the API returns it.
       input_schema:
         type: object
         properties:
-          service_id:
-            description: Service ID from previous services list
-            anyOf:
-              - type: string
-              - type: integer
-        required:
-          - service_id
+          q:
+            type: string
+            minLength: 1
+            description: >-
+              The service name, treatment, keyword, body area, or beauty need
+              stated by the user.
+          limit:
+            type: integer
+            minimum: 1
+            maximum: 30
+            default: 10
+        required: [q]
         additionalProperties: false
     trigger_hints:
+      - search for a service
+      - find a service
+      - do you have hair coloring
+      - services for damaged hair
+      - hair services
+      - nail services
+      - عندكم صبغة
+      - شو خدمات الشعر
+      - بدي مناكير
+      - عندكم خدمة
+      - بدي خدمة ل
+    request:
+      method: GET
+      url: http://localhost:3000/api/catalog/services/search
+      timeout_ms: 8000
+      map:
+        query:
+          q: $.q
+          limit: $.limit
+    response:
+      instructions: >-
+        The host renders matching services. Ask the user to choose the intended
+        service when more than one result is possible. Do not claim a service
+        exists unless it is in the API result.
+    selection:
+      items_path: $.services
+      id_path: $.id
+      label_path: $.name_ar
+      facts:
+        service: $.name_ar
+      match:
+        input_path: $.q
+        item_path: $.name_ar
+    navigates_to:
+      tool: get-service-details
+      map:
+        $.service_id: $.id
+
+  - id: get-service-details
+    tool:
+      title: Service Details
+      description: >-
+        Use when the user asks about the price, duration, description, variants,
+        or details of a specific service. If no trusted service_id is supplied
+        by navigation, resolve the user's service words through search-services
+        before reading details.
+      input_schema:
+        type: object
+        properties:
+          service_query:
+            type: string
+            minLength: 1
+            description: The service name or phrase stated by the user.
+          service_id:
+            type: integer
+            minimum: 1
+        required: [service_id]
+        additionalProperties: false
+    trigger_hints:
+      - tell me about this service
       - service details
-      - tell me about
-      - what is
-      - more info
+      - price of
+      - how much is
+      - how long does it take
+      - duration of
       - details of
-      - describe
-      - كم سعرها
+      - كم سعر
       - كم مدتها
-      - احكيلي عنها
+      - تفاصيل خدمة
+      - احكيلي عن
+    depends_on:
+      - tool: search-services
+        when: missing
+        arguments:
+          q: $.service_query
+        select:
+          items_path: $.services
+          id_path: $.id
+          label_path: $.name_ar
+          facts:
+            service: $.name_ar
+          match:
+            input_path: $.service_query
+            item_path: $.name_ar
+        map:
+          $.service_id: $.id
+        ttl_ms: 300000
     request:
       method: GET
       url: http://localhost:3000/api/catalog/services/{service_id}
@@ -462,62 +317,63 @@ tools:
       map:
         path:
           service_id: $.service_id
-        query: {}
-        body: {}
     response:
-      instructions:
-        You are Rozy, a salon assistant. Reply in the user language when available. Use only
-        API facts. Present full service details including variants, prices, duration, and images.
-        Preserve the exact ServiceVariants name_ar values. Base prices are not variant prices.
-        If currency is absent, do not add a currency label.
+      instructions: >-
+        Present only the returned service facts. Clearly distinguish base price
+        and base duration from variant-specific price and duration. Preserve
+        variant names exactly. If currency is absent, do not invent one.
       model_view:
         path: $.service
         include:
-          [
-            id,
-            name_ar,
-            description,
-            base_price,
-            base_duration_minutes,
-            ServiceVariants,
-          ]
-    references:
-      consume:
-        service_id: selected_service_id
+          - id
+          - name_ar
+          - description
+          - base_price
+          - base_duration_minutes
+          - ServiceVariants
+
+  - id: get-service-employees
+    tool:
+      title: Service Specialists
+      description: >-
+        Use only when the user asks who can perform a specific service. Resolve
+        the service against the catalog first; never infer a service ID or an
+        employee ID from names.
+      input_schema:
+        type: object
+        properties:
+          service_query:
+            type: string
+            minLength: 1
+            description: The service name or phrase stated by the user.
+          service_id:
+            type: integer
+            minimum: 1
+        required: [service_id]
+        additionalProperties: false
+    trigger_hints:
+      - who can do this service
+      - who performs
+      - which stylist
+      - which specialist
+      - مين بتعمل هاي الخدمة
+      - مين المختصات
+      - مين بعمل
     depends_on:
-      - tool: get-services
+      - tool: search-services
         when: missing
+        arguments:
+          q: $.service_query
         select:
           items_path: $.services
           id_path: $.id
           label_path: $.name_ar
-          facts:
-            service: $.name_ar
+          match:
+            input_path: $.service_query
+            item_path: $.name_ar
         map:
           $.service_id: $.id
-  - id: get-service-employees
-    tool:
-      title: Service Employees
-      description: Use when user wants to see which employees can perform a specific service.
-      input_schema:
-        type: object
-        properties:
-          service_id:
-            anyOf:
-              - type: string
-              - type: integer
-        required:
-          - service_id
-        additionalProperties: false
-    trigger_hints:
-      - who can do
-      - who does
-      - which employee
-      - which stylist
-      - available staff
-      - specialist
-      - مين بتعملها
-      - مين المختصات
+        ttl_ms: 300000
     request:
       method: GET
       url: http://localhost:3000/api/catalog/services/{service_id}/employees
@@ -525,100 +381,176 @@ tools:
       map:
         path:
           service_id: $.service_id
-        query: {}
-        body: {}
     response:
-      instructions:
-        You are Rozy, a salon assistant. Reply in the user language when available. Use only
-        API facts. Present available employees/stylists for this service.
+      instructions: >-
+        Present only employees returned by the API for this service. Do not
+        describe an employee as available at a time unless availability was
+        checked separately.
       model_view:
         path: $.employees
-        include: [id, name, role, is_active]
-    references:
-      consume:
-        service_id: selected_service_id
-    depends_on:
-      - tool: get-services
-        when: missing
-        select:
-          items_path: $.services
-          id_path: $.id
-          label_path: $.name_ar
-        map:
-          $.service_id: $.id
-  - id: get-availability
+        include:
+          - id
+          - name
+          - role
+          - is_active
+
+  # ---------------------------------------------------------------------------
+  # SCHEDULING FLOW
+  #
+  # New booking/availability requests MUST enter through
+  # resolve-service-for-scheduling. It validates the service before the runtime
+  # asks for date/variant/slot information.
+  # ---------------------------------------------------------------------------
+
+  - id: resolve-service-for-scheduling
     tool:
-      title: Check Availability
-      description:
-        Use when user wants to see available appointment slots or book a time. Needs date and
-        service.
+      title: Start Appointment Scheduling
+      description: >-
+        This is the entry point for every NEW request to book, reserve, schedule,
+        or check appointment times for a named service. The user's service text
+        is only a search query, never a trusted service ID. Search the real
+        catalog first and let the user disambiguate if needed. Do not skip this
+        validation by selecting load-schedule-slots or commit-selected-slot.
       input_schema:
         type: object
         properties:
+          q:
+            type: string
+            minLength: 1
+            description: >-
+              The service name, treatment, or beauty service the user wants to
+              schedule. Copy only the relevant service phrase from the user's
+              request.
           date:
             type: string
             format: date
-            description: Appointment date (YYYY-MM-DD)
-          service_id:
-            type: integer
-            minimum: 1
-            description: Service ID from a trusted catalog selection
-          variant_id:
-            type: integer
-            minimum: 1
-            description: Service variant ID
-          step:
-            type: integer
-            description: Time interval in minutes
-            default: 15
-            enum: [5, 10, 15, 20, 30]
-          employee_id:
-            type: integer
-            minimum: 1
-            description: Specific employee ID (optional)
+            description: Appointment date when the user explicitly supplied one.
+          variant_query:
+            type: string
+            minLength: 1
+            description: >-
+              A variant name or option explicitly requested by the user, if any.
           notes:
             type: string
             maxLength: 2000
-          preferred_time:
-            type: string
-            pattern: ^(?:[01]\d|2[0-3]):[0-5]\d$
-            description: User's explicitly requested local time normalized to HH:mm
-        required:
-          - date
-          - service_id
-          - variant_id
+        required: [q]
         additionalProperties: false
     trigger_hints:
-      - available
-      - availability
-      - when can i come
-      - what times
-      - open slots
-      - book appointment
-      - schedule
-      - appointments
-      - time slots
-      - book
-      - شو المواعيد بكرة
-      - في الساعة خمسة
+      - book an appointment for
+      - I want to book
+      - reserve a service
+      - schedule an appointment
+      - check availability for
+      - available times for
+      - appointment times for
       - بدي احجز
+      - بدي أحجز
+      - بدي موعد
+      - بدي احجز خدمة
+      - شو المواعيد لخدمة
+      - متى في موعد لخدمة
+      - في مواعيد لخدمة
+    request:
+      method: GET
+      url: http://localhost:3000/api/catalog/services/search
+      timeout_ms: 8000
+      map:
+        query:
+          q: $.q
+          limit:
+            source: constant
+            value: 10
+    response:
+      instructions: >-
+        This step validates the requested service before scheduling. The host
+        renders candidate services. Ask the user to choose the intended service
+        if the search is not an exact unique match.
+    selection:
+      items_path: $.services
+      id_path: $.id
+      label_path: $.name_ar
+      facts:
+        service: $.name_ar
+      match:
+        input_path: $.q
+        item_path: $.name_ar
+    navigates_to:
+      tool: load-schedule-slots
+      arguments:
+        date: $.date
+        variant_query: $.variant_query
+        notes: $.notes
+      map:
+        $.service_id: $.id
+
+  - id: load-schedule-slots
+    tool:
+      title: Continue Scheduling With Selected Service
+      description: >-
+        Internal continuation after resolve-service-for-scheduling selected a
+        real service. Never select this tool directly for a new free-form
+        booking or availability request. It resolves the service variant, then
+        reads available appointment slots.
+      input_schema:
+        type: object
+        properties:
+          service_id:
+            type: integer
+            minimum: 1
+          date:
+            type: string
+            format: date
+            description: Appointment date.
+          variant_query:
+            type: string
+            minLength: 1
+            description: Explicit variant preference from the user, if any.
+          variant_id:
+            type: integer
+            minimum: 1
+          notes:
+            type: string
+            maxLength: 2000
+        required:
+          - service_id
+          - date
+          - variant_id
+        additionalProperties: false
+    trigger_hints: []
+    depends_on:
+      - tool: get-service-details
+        when: missing
+        arguments:
+          service_id: $.service_id
+        select:
+          items_path: $.service.ServiceVariants
+          id_path: $.id
+          label_path: $.name_ar
+          facts:
+            variant: $.name_ar
+            price: $.price
+            duration: $.duration_minutes
+          match:
+            input_path: $.variant_query
+            item_path: $.name_ar
+        map:
+          $.variant_id: $.id
+        ttl_ms: 120000
     request:
       method: GET
       url: http://localhost:3000/api/availability
       timeout_ms: 8000
       map:
-        path: {}
         query:
           date: $.date
           variant_ids: $.variant_id
-          step: $.step
-          employee_ids: $.employee_id
-        body: {}
     response:
-      instructions:
-        You are Rozy, a salon assistant. Reply in the user language when available. Use only
-        API facts. Show available time slots in a clear format.
-      private_fields: [slot_token]
+      instructions: >-
+        Tell the user these are currently available times for the selected
+        service and variant. Choosing a time continues to the booking review; it
+        does not mean the booking is already confirmed.
+      private_fields:
+        - slot_token
       output_schema:
         type: object
         required: [slots]
@@ -627,80 +559,51 @@ tools:
             type: array
             items:
               type: object
-              required: [slot_token, start_at, start_time]
+              required:
+                - slot_token
+                - start_at
+                - start_time
               properties:
-                slot_token: { type: string, minLength: 1 }
-                start_at: { type: string, format: date-time }
+                slot_token:
+                  type: string
+                  minLength: 1
+                start_at:
+                  type: string
+                  format: date-time
                 start_time:
-                  { type: string, pattern: '^(?:[01]\d|2[0-3]):[0-5]\d$' }
-    selection: &a1
+                  type: string
+                  pattern: '^(?:[01]\d|2[0-3]):[0-5]\d$'
+    selection:
       items_path: $.slots
       id_path: $.slot_token
       id_sensitive: true
-      label_path: $.start_at
+      label_path: $.start_time
       facts:
         appointment_time: $.start_at
         local_time: $.start_time
-      match:
-        input_path: $.preferred_time
-        item_path: $.start_time
     navigates_to:
-      tool: book-appointment
+      tool: commit-selected-slot
       arguments:
-        date: $.date
         service_id: $.service_id
+        date: $.date
         variant_id: $.variant_id
-        employee_id: $.employee_id
-        preferred_time: $.preferred_time
         notes: $.notes
       map:
         $.slot_token: $.slot_token
-        $.start_at: $.start_at
-    depends_on:
-      - tool: get-services
-        when: missing
-        select:
-          items_path: $.services
-          id_path: $.id
-          label_path: $.name_ar
-          facts:
-            service: $.name_ar
-        map:
-          $.service_id: $.id
-      - tool: get-service-variants
-        when: missing
-        arguments:
-          service_id: $.service_id
-        select:
-          items_path: $
-          id_path: $.id
-          label_path: $.name_ar
-          facts:
-            variant: $.name_ar
-            price: $.price
-            duration: $.duration_minutes
-        map:
-          $.variant_id: $.id
-        ttl_ms: 120000
-    references:
-      consume:
-        service_id: selected_service_id
-  - id: book-appointment
+
+  - id: commit-selected-slot
     tool:
-      title: Book Appointment
-      description:
-        Book a salon appointment. Collect the date, let the user choose a variant and an
-        available slot, and require confirmation. Never invent a slot token.
+      title: Finalize Selected Appointment Slot
+      description: >-
+        Internal continuation only after the runtime has received a slot_token
+        from load-schedule-slots. Never select this tool for an initial booking
+        request, and never invent or accept a user-written slot token.
       input_schema:
         type: object
         properties:
           slot_token:
             type: string
-            description: Slot token from availability
-          notes:
-            type: string
-            description: Any special requests
-            maxLength: 2000
+            minLength: 1
           service_id:
             type: integer
             minimum: 1
@@ -710,67 +613,40 @@ tools:
           variant_id:
             type: integer
             minimum: 1
-          employee_id:
-            type: integer
-            minimum: 1
-          preferred_time:
+          notes:
             type: string
-            pattern: ^(?:[01]\d|2[0-3]):[0-5]\d$
-            description: User's explicitly requested local time normalized to HH:mm
-          start_at:
-            type: string
-            description: Display time copied from the selected availability result
+            maxLength: 2000
         required:
           - slot_token
         additionalProperties: false
-    trigger_hints:
-      - book this
-      - confirm booking
-      - I'll take it
-      - book it
-      - yes book
-      - confirm
-      - proceed
-      - schedule it
-      - set up appointment
-      - reserve
-      - بدي أحجز
-      - احجزيلي هاي الخدمة
-    request:
-      method: POST
-      url: http://localhost:3000/api/bookings/from-availability
-      timeout_ms: 12000
-      map:
-        path: {}
-        query: {}
-        body:
-          slot_token: $.slot_token
-          payment_provider:
-            source: constant
-            value: none
-          currency:
-            source: constant
-            value: SAR
-          hold_minutes:
-            source: constant
-            value: 15
+    trigger_hints: []
+    depends_on:
+      - tool: load-schedule-slots
+        when: missing
+        arguments:
+          service_id: $.service_id
+          date: $.date
+          variant_id: $.variant_id
           notes: $.notes
-      auth:
-        type: session
-      retry:
-        attempts: 1
-    response:
-      instructions:
-        You are Rozy, a salon assistant. Reply in the user language when available. Use only
-        API facts. If successful, share confirmation details. If error, apologize without exposing
-        details.
+        select:
+          items_path: $.slots
+          id_path: $.slot_token
+          id_sensitive: true
+          label_path: $.start_time
+          facts:
+            appointment_time: $.start_at
+            local_time: $.start_time
+        map:
+          $.slot_token: $.slot_token
+        ttl_ms: 120000
     behavior:
       effect: side-effect
       recovery:
-        refresh_dependency: get-availability
+        refresh_dependency: load-schedule-slots
+        statuses: [409, 410]
       confirmation:
         required: true
-        ttl_ms: 120000
+        ttl_ms: 60000
         preview:
           service:
             source: selection
@@ -781,159 +657,75 @@ tools:
           price:
             source: selection
             path: $.price
+          duration:
+            source: selection
+            path: $.duration
           date: $.date
           appointment_time:
             source: selection
             path: $.local_time
           notes: $.notes
-    depends_on:
-      - tool: get-availability
-        when: missing
-        arguments:
-          date: $.date
-          service_id: $.service_id
-          variant_id: $.variant_id
-          employee_id: $.employee_id
-          preferred_time: $.preferred_time
-        select: *a1
-        map:
-          $.slot_token: $.slot_token
-        ttl_ms: 120000
+    request:
+      method: POST
+      url: http://localhost:3000/api/bookings/from-availability
+      timeout_ms: 12000
+      auth:
+        type: session
+      retry:
+        attempts: 1
+      map:
+        body:
+          slot_token: $.slot_token
+          notes: $.notes
+    response:
+      instructions: >-
+        Report the booking as successful only when the API call succeeded.
+        Present the returned confirmation facts concisely. Never expose internal
+        tokens or transport details.
+
+  # ---------------------------------------------------------------------------
+  # ACCOUNT
+  # ---------------------------------------------------------------------------
+
   - id: get-my-appointments
     tool:
       title: My Appointments
-      description: Use when user wants to see their upcoming appointments. Requires client authentication.
+      description: >-
+        Use when an authenticated customer asks to see their own upcoming
+        appointments or bookings.
       input_schema:
         type: object
         properties:
           limit:
             type: integer
-            description: Number of appointments
-            default: 20
             minimum: 1
             maximum: 50
+            default: 20
           offset:
             type: integer
-            description: Pagination offset
-            default: 0
             minimum: 0
-        required: []
+            default: 0
         additionalProperties: false
     trigger_hints:
       - my appointments
       - my bookings
-      - my schedule
-      - upcoming
-      - my reservations
+      - upcoming appointments
+      - when is my appointment
+      - حجوزاتي
+      - مواعيدي
       - متى موعدي
       - ورجيني حجوزاتي
     request:
       method: GET
       url: http://localhost:3000/api/appointments
       timeout_ms: 8000
+      auth:
+        type: session
       map:
-        path: {}
         query:
           limit: $.limit
           offset: $.offset
-        body: {}
-      auth:
-        type: session
     response:
-      instructions:
-        You are Rozy, a salon assistant. Reply in the user language when available. Use only
-        API facts. Present user's upcoming appointments with dates, times, and services.
-  - id: get-featured-services
-    tool:
-      title: Featured Services
-      description: Use only when the user asks for services marked as featured by the API.
-      input_schema:
-        type: object
-        properties:
-          limit:
-            type: integer
-            description: Number of services
-            default: 6
-            minimum: 1
-            maximum: 30
-        required: []
-        additionalProperties: false
-    trigger_hints:
-      - featured
-      - الخدمات المميزة
-      - شو الخدمات المميزة
-    request:
-      method: GET
-      url: http://localhost:3000/api/home/featured-services
-      timeout_ms: 8000
-      map:
-        path: {}
-        query:
-          limit: $.limit
-        body: {}
-    response:
-      instructions:
-        You are Rozy, a salon assistant. Reply in the user language when available. Use only
-        API facts. Present featured services with names, descriptions, and prices.
-  - id: get-service-variants
-    tool:
-      title: Service Variants
-      description: Use when user wants to see different variants/options for a service.
-      input_schema:
-        type: object
-        properties:
-          service_id:
-            type: integer
-            minimum: 1
-            description: Service ID
-        required: [service_id]
-        additionalProperties: false
-    trigger_hints:
-      - variants
-      - options
-      - different types
-      - price options
-      - شو الخيارات
-      - أي أطوال متوفرة
-    request:
-      method: GET
-      url: http://localhost:3000/api/catalog/service-variants
-      timeout_ms: 8000
-      map:
-        path: {}
-        query:
-          service_id: $.service_id
-        body: {}
-    response:
-      instructions:
-        You are Rozy, a salon assistant. Reply in the user language when available. Use only
-        API facts. Present service variants with names, prices, and duration.
-      model_view:
-        include: [id, service_id, name_ar, price, duration_minutes]
-      output_schema:
-        type: array
-        items:
-          type: object
-          required: [id, service_id, name_ar, price, duration_minutes]
-          properties:
-            id: { type: integer, minimum: 1 }
-            service_id: { type: integer, minimum: 1 }
-            name_ar: { type: string }
-            price: { type: string }
-            duration_minutes: { type: integer, minimum: 1 }
-    selection:
-      items_path: $
-      id_path: $.id
-      label_path: $.name_ar
-    references:
-      consume:
-        service_id: selected_service_id
-    depends_on:
-      - tool: get-services
-        when: missing
-        select:
-          items_path: $.services
-          id_path: $.id
-          label_path: $.name_ar
-        map:
-          $.service_id: $.id
+      instructions: >-
+        Present only the authenticated customer's appointments returned by the
+        API, with the most useful service/date/time/status information available.

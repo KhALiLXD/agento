@@ -25,7 +25,7 @@ The examples do not start a fake HTTP server and do not sign or verify local JWT
 ## Runtime creation
 
 ```ts
-import { AgentRuntime } from "@lousin/agento";
+import { AgentRuntime } from "agento-runtime";
 
 const runtime = await AgentRuntime.create({
   configPath: "./agent.yml",

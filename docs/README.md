@@ -4,7 +4,7 @@
 
 AGENTO compiles declarative API definitions into model-facing tools and a separate execution registry. The runtime owns validation, dependency data flow, sessions, credential transport, confirmation, HTTP policy and errors. Models select a shortlisted tool and extract user arguments.
 
-This branch is a **2.0.0-alpha.2 implementation**, not a claim that every deployment is production certified. The scoped package name `@lousin/agento` is prepared locally; it has not been published or checked for registry ownership. Node 20.11+ is required. Coverage commands require a recent Node release (verified on Node 24).
+This branch is a **2.0.0-alpha.2 implementation**, not a claim that every deployment is production certified. The scoped package name `agento-runtime` is prepared locally; it has not been published or checked for registry ownership. Node 20.11+ is required. Coverage commands require a recent Node release (verified on Node 24).
 
 ## Start
 
@@ -21,7 +21,7 @@ The demos call the real API configured through `AGENTO_API_BASE_URL` and use `OP
 V2 treats user credentials as opaque transport data. Pass a user's access token as `auth.token`; AGENTO forwards it as `Authorization: Bearer ...` for tools with `request.auth.type: session`. The downstream API remains responsible for token validity, login state, scopes and resource permissions. A `401` or `403` response is returned as `AUTH_REJECTED`; V2 does not require a JWT verifier, JWKS URL or local authorization layer.
 
 ```ts
-import { AgentRuntime, MemorySessionStore } from "@lousin/agento/v2";
+import { AgentRuntime, MemorySessionStore } from "agento-runtime";
 
 const runtime = await AgentRuntime.create({
   configPath: "./agent.yml",

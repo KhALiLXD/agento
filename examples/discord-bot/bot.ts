@@ -227,12 +227,8 @@ async function onMessage(message: Message) {
       request.sessionId,
     );
     console.log("Reply state:", reply);
-    if (reply.state === "forbidden" || reply.state === "stale") {
-      await message.reply(
-        reply.state === "forbidden"
-          ? "هذا الاختيار مرتبط بصاحب الطلب."
-          : "هذه القائمة لم تعد فعالة. استخدمي أحدث رسالة من روزي.",
-      );
+    if (reply.state === "forbidden") {
+      await message.reply( "هذا الاختيار مرتبط بصاحب الطلب.");
       return;
     }
   }
