@@ -2,8 +2,7 @@
 
 ## Baseline inspection
 
-The implementation started from `action-feature` at `d4374bbefb642fc3c3807821dc00eefd5e97f7d4` and compared `main` at `1e3eb3058d1f5e369d512b5c9feea730dbada5b3`. These branches diverged from `66c54993ed2c3f83bd7a8c93a941b390c9aea94d`. Main's separate changes were an example/config update and small provider/redaction changes; no useful new core architecture was discarded.
-
+.
 The previous flow combined a first-match trigger detector with textual JSON classification, a second field-extraction pass, loose conversation state, implicit response selection and HTTP execution inside the agent. The new runtime does not use those routing or extraction classes.
 
 Preserved work includes encrypted opaque-credential storage, credential redaction

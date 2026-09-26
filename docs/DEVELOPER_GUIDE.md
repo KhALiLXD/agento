@@ -1,4 +1,4 @@
-# AGENTO V2 developer guide
+# AGENTO  developer guide
 
 ## Local workflow
 

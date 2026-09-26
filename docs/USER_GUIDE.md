@@ -1,4 +1,4 @@
-# AGENTO V2 user guide
+# AGENTO user guide
 
 AGENTO V2 turns a strict YAML tool catalog into a runtime that routes user messages, gathers validated inputs, resolves declared dependencies, asks for confirmation and calls your real APIs.
 

@@ -1,4 +1,4 @@
-# AGENTO v2
+# AGENTO 
 
 **Already have an API? Make it agent-ready.**
 
