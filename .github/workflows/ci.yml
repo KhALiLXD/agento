@@ -19,7 +19,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
-      - run: npm test
+      - run: npm run test
       - run: npm ci --prefix examples/discord-bot
       - run: npm --prefix examples/discord-bot run typecheck
       - run: npm pack --dry-run

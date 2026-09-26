@@ -228,7 +228,7 @@ async function onMessage(message: Message) {
     );
     console.log("Reply state:", reply);
     if (reply.state === "forbidden") {
-      await message.reply( "هذا الاختيار مرتبط بصاحب الطلب.");
+      await message.reply("هذا الاختيار مرتبط بصاحب الطلب.");
       return;
     }
   }

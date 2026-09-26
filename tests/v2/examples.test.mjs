@@ -244,7 +244,10 @@ test("salon navigation preserves selected IDs, obtains slot data from the API an
 
   // The service name matches exactly, so scheduling advances to variant choice.
   assert.equal(r.status, "needs_selection");
-  assert.equal(r.selection.options.some((option) => option.id === "13"), true);
+  assert.equal(
+    r.selection.options.some((option) => option.id === "13"),
+    true,
+  );
 
   r = await runtime.select({
     sessionId: "booking",
