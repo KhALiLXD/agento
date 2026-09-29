@@ -6,7 +6,6 @@ AGENTO connects natural-language AI agents to real REST APIs without handing exe
 
 The model interprets user intent. AGENTO validates inputs, resolves dependencies, controls side effects, builds the HTTP request, manages session state, and executes within the contract you define. Your API remains responsible for authentication, authorization, and business rules.
 
-> **Alpha:** AGENTO is under active development. The public API may still change before the first stable release.
 
 **Documentation:** https://agento.khalil-ay.com  
 **Source:** https://github.com/KhALiLXD/agento
@@ -43,7 +42,7 @@ The probabilistic part stays at the edge. Safety- and correctness-critical execu
 AGENTO is a server-side ESM package for Node.js 20.11+.
 
 ```bash
-npm install agento-runtime@alpha
+npm install agento-runtime
 ```
 
 Then import the public runtime:

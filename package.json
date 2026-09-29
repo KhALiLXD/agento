@@ -1,10 +1,36 @@
 {
   "name": "agento-runtime",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0",
   "description": "AGENTO: a schema-driven AI agent runtime for existing REST APIs",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
+    "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KhALiLXD/agento-runtime.git"
+  },
+
+  "homepage": "https://github.com/KhALiLXD/agento-runtime#readme",
+
+  "bugs": {
+    "url": "https://github.com/KhALiLXD/agento-runtime/issues"
+  },
+
+  "keywords": [
+    "ai",
+    "agent",
+    "ai-agent",
+    "agent-runtime",
+    "runtime",
+    "rest-api",
+    "api",
+    "llm",
+    "openai",
+    "anthropic",
+    "tool-calling",
+    "typescript"
+  ],
+
   "files": [
     "dist"
   ],
@@ -30,14 +56,9 @@
     "example:discord": "npm run build && npm --prefix examples/discord-bot start",
     "example:console": "npm run build && node examples/console.mjs"
   },
-  "keywords": [
-    "ai",
-    "agent",
-    "chatbot",
-    "openai",
-    "anthropic",
-    "conversation"
-  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "author": "Khalil Alyacoubi",
   "license": "MPL-2.0",
   "dependencies": {
